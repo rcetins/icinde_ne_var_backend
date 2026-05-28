@@ -10,9 +10,7 @@ load_dotenv()
 
 app = FastAPI()
 
-client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY")
-)
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
 class ContentRequest(BaseModel):
@@ -27,9 +25,7 @@ class NutritionRequest(BaseModel):
 
 @app.get("/")
 def root():
-    return {
-        "message": "İçinde Ne Var Backend Çalışıyor"
-    }
+    return {"message": "İçinde Ne Var Backend Çalışıyor"}
 
 
 def normalize_text(text: str) -> str:
@@ -39,128 +35,205 @@ def normalize_text(text: str) -> str:
     return text.strip()
 
 
-def is_ocr_text_weak(text: str) -> bool:
-    clean = normalize_text(text)
-
-    if len(clean) < 25:
-        return True
-
-    letters = re.findall(r"[a-zA-ZğüşöçıİĞÜŞÖÇ]", clean)
-    if len(letters) < 15:
-        return True
-
-    # Çok fazla anlamsız karakter varsa OCR zayıf kabul edilir.
-    non_text_chars = re.findall(r"[^a-zA-ZğüşöçıİĞÜŞÖÇ0-9\s,.;:%()/+\-]", clean)
-    if len(non_text_chars) > max(10, len(clean) * 0.25):
-        return True
-
-    return False
-
-
 def extract_relevant_content(text: str) -> str:
     clean = normalize_text(text)
     lower = clean.lower()
 
-    keywords = [
-        "içindekiler",
-        "icindekiler",
-        "ingredients",
-        "ingredient",
-        "composition",
-        "inci",
-        "contents",
-        "bileşenler",
-        "bilesenler",
+    start_keywords = [
+        "içindekiler", "icindekiler", "ingredients", "ingredient",
+        "composition", "contents", "inci", "bileşenler", "bilesenler",
+        "formula", "formül", "formul"
     ]
 
-    for keyword in keywords:
+    start_index = -1
+    for keyword in start_keywords:
         idx = lower.find(keyword)
-        if idx != -1:
-            extracted = clean[idx:]
-            return extracted[:1200]
+        if idx != -1 and (start_index == -1 or idx < start_index):
+            start_index = idx
 
-    return clean[:1200]
+    extracted = clean[start_index:] if start_index != -1 else clean
+    lower_extracted = extracted.lower()
+
+    stop_keywords = [
+        "üretici", "uretici", "ithalatçı", "ithalatci", "tavsiye edilen",
+        "son tüketim", "son tuketim", "saklama koşulları", "saklama kosullari",
+        "menşei", "mensei", "net miktar", "barkod", "barcode",
+        "made in", "distributed by", "manufacturer", "www.", "tel:",
+        "customer", "art no", "batch", "lot", "paşabahçe"
+    ]
+
+    stop_index = -1
+    for keyword in stop_keywords:
+        idx = lower_extracted.find(keyword)
+        if idx > 40 and (stop_index == -1 or idx < stop_index):
+            stop_index = idx
+
+    if stop_index != -1:
+        extracted = extracted[:stop_index]
+
+    return extracted[:1400].strip()
 
 
-def local_content_analysis(text: str):
+def ocr_quality(text: str) -> dict:
+    clean = normalize_text(text)
+    lower = clean.lower()
+
+    letters = re.findall(r"[a-zA-ZğüşöçıİĞÜŞÖÇ]", clean)
+    comma_like = clean.count(",") + clean.count(";")
+    has_content_keyword = any(
+        k in lower for k in [
+            "içindekiler", "icindekiler", "ingredients", "composition",
+            "contents", "inci", "bileşenler", "bilesenler"
+        ]
+    )
+
+    if len(clean) < 30 or len(letters) < 20:
+        return {
+            "weak": True,
+            "can_be_low": False,
+            "reason": "Metin çok kısa veya net değil."
+        }
+
+    weird_chars = re.findall(r"[^a-zA-ZğüşöçıİĞÜŞÖÇ0-9\s,.;:%()/+\-]", clean)
+    if len(weird_chars) > max(12, len(clean) * 0.22):
+        return {
+            "weak": True,
+            "can_be_low": False,
+            "reason": "OCR metninde fazla anlamsız karakter var."
+        }
+
+    # Düşük risk diyebilmek için metin gerçekten içerik listesine benzemeli.
+    can_be_low = has_content_keyword or comma_like >= 3 or len(clean) >= 120
+
+    return {
+        "weak": False,
+        "can_be_low": can_be_low,
+        "reason": "Metin okunabilir."
+    }
+
+
+HIGH_TERMS = [
+    # Gıda katkıları / tartışmalı içerikler
+    "aspartam", "aspartame", "acesulfam", "acesulfame", "acesulfame k",
+    "sodyum nitrit", "sodium nitrite", "nitrit", "nitrite",
+    "e250", "e251", "e252", "monosodyum glutamat", "monosodium glutamate",
+    "msg", "e621", "glikoz şurubu", "glikoz surubu", "glucose syrup",
+    "fruktoz şurubu", "fruktoz surubu", "fructose syrup",
+    "mısır şurubu", "misir surubu", "corn syrup", "high fructose",
+    "hidrojene", "hydrogenated", "trans yağ", "trans yag", "trans fat",
+    "titanyum dioksit", "titanium dioxide", "e171",
+    # Kozmetik / hassasiyet ve tartışmalı içerikler
+    "formaldehit", "formaldehyde", "triclosan", "hydroquinone",
+    "hidrokinon", "methylisothiazolinone", "methylchloroisothiazolinone",
+    "bha", "bht", "retinyl palmitate"
+]
+
+MEDIUM_TERMS = [
+    # Gıda
+    "şeker", "seker", "sugar", "palm", "aroma", "flavour", "flavor",
+    "renklendirici", "colorant", "koruyucu", "preservative",
+    "emülgatör", "emulgator", "emulsifier", "tatlandırıcı", "tatlandirici",
+    "sweetener", "gluten", "soya", "soy", "nişasta", "nisasta", "starch",
+    # Kozmetik
+    "alkol", "alcohol", "parfüm", "parfum", "fragrance", "sls", "sles",
+    "sodium lauryl sulfate", "sodium laureth sulfate", "paraben",
+    "phenoxyethanol", "mineral oil", "paraffinum liquidum", "silicone",
+    "dimethicone", "petrolatum", "peg-", "ci "
+]
+
+
+def local_content_analysis(text: str, quality: dict) -> dict:
     lower = text.lower()
 
-    high_risk_terms = [
-        "aspartam", "acesulfam", "sodyum nitrit", "nitrit", "e250", "e251", "e252",
-        "monosodyum glutamat", "msg", "e621", "glikoz şurubu", "glikoz surubu",
-        "fruktoz şurubu", "fruktoz surubu", "mısır şurubu", "misir surubu",
-        "hidrojene", "trans yağ", "trans yag", "titanyum dioksit", "e171",
-        "formaldehit", "triclosan", "hydroquinone", "hidrokinon",
-    ]
+    high_found = [term for term in HIGH_TERMS if term in lower]
+    medium_found = [term for term in MEDIUM_TERMS if term in lower]
 
-    attention_terms = [
-        "şeker", "seker", "palm", "aroma", "renklendirici", "koruyucu",
-        "emülgatör", "emulgator", "tatlandırıcı", "tatlandirici",
-        "gluten", "soya", "alkol", "parfüm", "parfum", "fragrance",
-        "phenoxyethanol", "phenoxyethanol", "sls", "sles", "paraben",
-        "silikon", "silicone", "mineral oil", "paraffinum liquidum",
-    ]
-
-    high_found = [term for term in high_risk_terms if term in lower]
-    attention_found = [term for term in attention_terms if term in lower]
+    if quality["weak"]:
+        return {
+            "title": "🟡 Yazı Net Okunamadı",
+            "message": (
+                "İçerik listesi yeterince net okunamadı. Daha doğru sonuç için ürünü sabitleyip "
+                "içindekiler alanını sarı çerçeveye yaklaştırın."
+            ),
+            "risk": "medium",
+            "read_text": text
+        }
 
     if high_found:
         return {
             "title": "🔴 Yüksek Dikkat",
             "message": (
                 "Dikkat gerektiren içerikler tespit edildi: "
-                + ", ".join(high_found[:4])
-                + ". Bu sonuç bilgilendirme amaçlıdır; nihai tercih kullanıcıya aittir."
+                + ", ".join(high_found[:5])
+                + ". Bu değerlendirme bilgilendirme amaçlıdır; nihai karar kullanıcıya aittir."
             ),
-            "risk": "high"
+            "risk": "high",
+            "read_text": text
         }
 
-    if len(attention_found) >= 2:
+    if len(medium_found) >= 1:
         return {
-            "title": "🟡 Dikkat Gerektirir",
+            "title": "🟡 Orta Risk",
             "message": (
-                "Bazı içerikler hassas kişiler için dikkat gerektirebilir: "
-                + ", ".join(attention_found[:5])
-                + ". Sık kullanım/tüketimde etiketi dikkatli değerlendirin."
+                "Dikkat edilmesi gereken içerikler görüldü: "
+                + ", ".join(medium_found[:6])
+                + ". Hassasiyet, sık tüketim/kullanım ve kişisel durumlar sonucu değiştirebilir."
             ),
-            "risk": "medium"
+            "risk": "medium",
+            "read_text": text
         }
 
-    if len(attention_found) == 1:
+    if not quality["can_be_low"]:
         return {
-            "title": "🟡 Düşük-Orta Dikkat",
+            "title": "🟡 Orta Risk",
             "message": (
-                f"Okunan içerikte dikkat edilebilecek bir madde görüldü: {attention_found[0]}. "
-                "Genel değerlendirme için metnin tamamının net okunduğundan emin olun."
+                "Metin okunabilir ama içerik listesi tam yakalanmamış olabilir. Net karar için "
+                "İçindekiler/Ingredients alanını daha doğrudan okutun."
             ),
-            "risk": "medium"
+            "risk": "medium",
+            "read_text": text
         }
 
     return {
-        "title": "🟡 İnceleme Gerekli",
+        "title": "🟢 Düşük Risk",
         "message": (
-            "Okunan metinde bilinen yüksek riskli madde yakalanmadı; ancak içerik listesi sınırlı okunmuş olabilir. "
-            "Daha net sonuç için içindekiler alanını sarı çerçeveye hizalayıp tekrar deneyin."
+            "Okunan içerik listesinde belirgin yüksek riskli veya dikkat gerektiren madde yakalanmadı. "
+            "Bu sonuç yalnızca okunan metne göre bilgilendirme amaçlıdır."
         ),
-        "risk": "medium"
+        "risk": "low",
+        "read_text": text
     }
+
+
+def risk_rank(risk: str) -> int:
+    risk = (risk or "").lower()
+    if risk == "high":
+        return 3
+    if risk == "medium":
+        return 2
+    if risk == "low":
+        return 1
+    return 2
+
+
+def normalize_risk(risk: str) -> str:
+    risk = (risk or "").lower().strip()
+    if risk in ["high", "medium", "low"]:
+        return risk
+    return "medium"
 
 
 @app.post("/analyze-content")
 async def analyze_content(data: ContentRequest):
     raw_text = normalize_text(data.text)
     content_text = extract_relevant_content(raw_text)
+    quality = ocr_quality(content_text)
 
-    if is_ocr_text_weak(content_text):
-        return {
-            "title": "🟡 Yazı Net Okunamadı",
-            "message": "İçindekiler alanı yeterince net okunamadı. Ürünü sabitleyip sarı çerçeveye yaklaştırarak tekrar deneyin.",
-            "risk": "medium",
-            "read_text": content_text
-        }
+    fallback = local_content_analysis(content_text, quality)
 
-    # Önce hızlı yerel analiz yapılır. AI hata verirse bu döner.
-    fallback = local_content_analysis(content_text)
+    # Zayıf OCR varsa AI'ya bile sormadan orta risk / net okunamadı döndür.
+    if quality["weak"]:
+        return fallback
 
     try:
         response = client.chat.completions.create(
@@ -169,71 +242,82 @@ async def analyze_content(data: ContentRequest):
                 {
                     "role": "system",
                     "content": """
-Sen 'İçinde Ne Var?' uygulaması için gıda ve kozmetik içerik analiz motorusun.
+Sen 'İçinde Ne Var?' uygulamasının gıda ve kozmetik içerik analiz motorusun.
 
-Görevin:
-- Kullanıcının OCR ile okuttuğu ürün içeriğini değerlendir.
-- Gıda ve kozmetik ürünlerini birlikte anlayabil.
-- Dünya genelinde kabul gören sağlık otoritelerinin yaklaşımını dikkate al:
-  WHO/FAO JECFA katkı maddesi değerlendirmeleri, Codex gıda katkı standartları,
-  IARC kanserojen sınıflandırmaları, EFSA/FDA gibi kurumların güvenlik yaklaşımı.
+Temel kurallar:
+- Kullanıcıya "al" veya "alma" deme.
 - Kesin tıbbi hüküm verme.
-- "Al" veya "alma" deme.
-- Kararı kullanıcıya bırak.
-- Metin zayıf/eksikse ASLA düşük risk deme; "Yazı net okunamadı" veya "Dikkat" dön.
-- Cevap kısa, net, kullanıcıya faydalı ve Türkçe olsun.
+- Nihai karar kullanıcıya aittir.
+- Emin değilsen ASLA düşük risk verme; medium dön.
+- OCR metni eksik veya içerik listesi tam değilse medium dön.
+- Düşük risk sadece içerik listesi yeterince net ve dikkat gerektiren madde görünmüyorsa verilir.
+- Cevap Türkçe, kısa ve net olsun.
 
-Risk mantığı:
-high = tartışmalı, hassasiyet oluşturabilecek veya sık tüketim/kullanımda dikkat gerektiren güçlü içerik varsa.
-medium = şeker, palm, aroma, koruyucu, renklendirici, parfüm, alkol, SLS/SLES/paraben vb. dikkat gerektiren içerikler varsa veya metin eksikse.
-low = sadece içerik listesi yeterince net ve riskli/dikkat gerektiren madde yoksa.
+Referans yaklaşımı:
+- Gıda için WHO/FAO JECFA, Codex GSFA, EFSA/FDA güvenlik yaklaşımını dikkate al.
+- Kanserojenlik tehlikesi için IARC sınıflandırma mantığını dikkate al.
+- Kozmetik için paraben, SLS/SLES, alkol, fragrance/parfum, phenoxyethanol, formaldehyde salıcılar,
+  triclosan, hydroquinone, methylisothiazolinone gibi hassasiyet/tartışmalı içerikleri önemse.
+
+Risk:
+high = nitrit/nitrat türevleri, aspartam/acesulfame, MSG/E621, trans/hidrojene yağ, titanium dioxide/E171,
+       formaldehyde, triclosan, hydroquinone, methylisothiazolinone gibi güçlü dikkat gerektiren içerikler varsa.
+medium = şeker, palm, aroma, koruyucu, renklendirici, emülgatör, tatlandırıcı, SLS/SLES, paraben,
+         fragrance/parfum, alkol, mineral oil/paraffinum liquidum, phenoxyethanol gibi dikkat içerikleri varsa.
+low = sadece metin net ve belirgin dikkat/yüksek risk maddesi yoksa.
 
 JSON dışında hiçbir şey yazma.
-JSON formatı:
+JSON:
 {
   "title": "🔴/🟡/🟢 kısa başlık",
-  "message": "2-4 kısa cümlelik açıklama. Tespit edilen 1-4 önemli maddeyi belirt. Nihai karar kullanıcıya aittir.",
+  "message": "2-4 kısa cümle. Yakalanan önemli maddeleri belirt. Nihai karar kullanıcıya aittir.",
   "risk": "high | medium | low"
 }
 """
                 },
                 {
                     "role": "user",
-                    "content": f"OCR ile okunan içerik metni:\n{content_text}"
+                    "content": f"OCR ile okunan ürün içeriği:\n{content_text}"
                 }
             ],
-            temperature=0.2,
-            max_tokens=300
+            temperature=0,
+            max_tokens=350
         )
 
         result_text = response.choices[0].message.content.strip()
 
         try:
-            result = json.loads(result_text)
+            ai_result = json.loads(result_text)
         except Exception:
-            return {
-                **fallback,
-                "read_text": content_text
-            }
+            return fallback
 
-        title = result.get("title") or fallback["title"]
-        message = result.get("message") or fallback["message"]
-        risk = result.get("risk") or fallback["risk"]
+        ai_risk = normalize_risk(ai_result.get("risk"))
+        fallback_risk = fallback["risk"]
 
-        if risk not in ["high", "medium", "low"]:
-            risk = "medium"
+        # Güvenlik kuralı: AI, yerel motorun riskini düşüremez.
+        # Örn local medium iken AI low diyorsa medium kalır.
+        if risk_rank(ai_risk) < risk_rank(fallback_risk):
+            final_risk = fallback_risk
+        else:
+            final_risk = ai_risk
+
+        # Ayrıca düşük risk için OCR kalitesi ve içerik benzerliği şart.
+        if final_risk == "low" and not quality["can_be_low"]:
+            final_risk = "medium"
+
+        if final_risk == fallback_risk and fallback_risk != ai_risk:
+            return fallback
 
         return {
-            "title": title,
-            "message": message,
-            "risk": risk,
+            "title": ai_result.get("title") or fallback["title"],
+            "message": ai_result.get("message") or fallback["message"],
+            "risk": final_risk,
             "read_text": content_text
         }
 
     except Exception as e:
         return {
             **fallback,
-            "read_text": content_text,
             "debug": str(e)
         }
 
@@ -249,13 +333,12 @@ async def analyze_nutrition(data: NutritionRequest):
                     "content": """
 Sen profesyonel bir besin analizi asistanısın.
 
-Kullanıcının gönderdiği yemek/öğün görüntüsünü analiz et.
-Kısa, net ve tahmini değer ver.
+Görüntüdeki yemeği/öğünü tahmini analiz et.
 Kesin laboratuvar sonucu gibi konuşma.
-Porsiyon belirsizse "tahmini" olduğunu belirt.
+Porsiyon belirsizse tahmini olduğunu belirt.
+Kısa, net, kullanıcı dostu cevap ver.
 
-Şu formatı koru:
-
+Format:
 Enerji: %10
 Kalori: 550 kcal
 Protein: 20g
@@ -267,10 +350,7 @@ Kısa yorum: ...
                 {
                     "role": "user",
                     "content": [
-                        {
-                            "type": "text",
-                            "text": "Bu öğünün tahmini besin değerlerini analiz et."
-                        },
+                        {"type": "text", "text": "Bu öğünün tahmini besin değerlerini analiz et."},
                         {
                             "type": "image_url",
                             "image_url": {
