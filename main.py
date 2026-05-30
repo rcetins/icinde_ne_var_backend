@@ -57,9 +57,9 @@ def extract_relevant_content(text: str) -> str:
     stop_keywords = [
         "üretici", "uretici", "ithalatçı", "ithalatci", "tavsiye edilen",
         "son tüketim", "son tuketim", "saklama koşulları", "saklama kosullari",
-        "menşei", "mensei", "net miktar", "barkod", "barcode",
-        "made in", "distributed by", "manufacturer", "www.", "tel:",
-        "customer", "art no", "batch", "lot", "paşabahçe"
+        "menşei", "mensei", "net miktar", "barkod", "barcode", "made in",
+        "distributed by", "manufacturer", "www.", "tel:", "customer",
+        "art no", "batch", "lot"
     ]
 
     stop_index = -1
@@ -71,7 +71,7 @@ def extract_relevant_content(text: str) -> str:
     if stop_index != -1:
         extracted = extracted[:stop_index]
 
-    return extracted[:1400].strip()
+    return extracted[:1800].strip()
 
 
 def ocr_quality(text: str) -> dict:
@@ -102,7 +102,6 @@ def ocr_quality(text: str) -> dict:
             "reason": "OCR metninde fazla anlamsız karakter var."
         }
 
-    # Düşük risk diyebilmek için metin gerçekten içerik listesine benzemeli.
     can_be_low = has_content_keyword or comma_like >= 3 or len(clean) >= 120
 
     return {
@@ -112,97 +111,254 @@ def ocr_quality(text: str) -> dict:
     }
 
 
-HIGH_TERMS = [
-    # Gıda katkıları / tartışmalı içerikler
-    "aspartam", "aspartame", "acesulfam", "acesulfame", "acesulfame k",
-    "sodyum nitrit", "sodium nitrite", "nitrit", "nitrite",
-    "e250", "e251", "e252", "monosodyum glutamat", "monosodium glutamate",
-    "msg", "e621", "glikoz şurubu", "glikoz surubu", "glucose syrup",
-    "fruktoz şurubu", "fruktoz surubu", "fructose syrup",
-    "mısır şurubu", "misir surubu", "corn syrup", "high fructose",
-    "hidrojene", "hydrogenated", "trans yağ", "trans yag", "trans fat",
-    "titanyum dioksit", "titanium dioxide", "e171",
-    # Kozmetik / hassasiyet ve tartışmalı içerikler
-    "formaldehit", "formaldehyde", "triclosan", "hydroquinone",
-    "hidrokinon", "methylisothiazolinone", "methylchloroisothiazolinone",
-    "bha", "bht", "retinyl palmitate"
-]
+# Uygulamanın hızlı/yedek karar motoru.
+# Amaç: AI hata verse bile her şeyi yeşile düşürmemek.
+TERM_INFO = {
+    "aspartam": {
+        "risk": "high",
+        "name": "Aspartam",
+        "purpose": "Şekersiz veya düşük kalorili ürünlerde tatlandırıcı olarak kullanılır.",
+        "effect": "Hassas kişilerde dikkat gerektirebilir. Fenilketonüri hastaları için uygun değildir; sık tüketimde toplam tatlandırıcı alımı değerlendirilmelidir."
+    },
+    "acesulfam": {
+        "risk": "high",
+        "name": "Acesulfam K",
+        "purpose": "Kalorisiz tatlandırıcı olarak kullanılır.",
+        "effect": "Tek başına kesin zarar hükmü verilemez; fakat sık tüketilen diyet ürünlerde toplam yapay tatlandırıcı yükü açısından dikkat gerektirir."
+    },
+    "sodyum nitrit": {
+        "risk": "high",
+        "name": "Sodyum nitrit / Nitrit",
+        "purpose": "İşlenmiş et ürünlerinde renk koruma ve mikrobiyal dayanıklılık için kullanılır.",
+        "effect": "İşlenmiş et ürünleriyle birlikte değerlendirildiğinde sık tüketimde dikkat edilmesi gereken katkılardandır."
+    },
+    "nitrit": {
+        "risk": "high",
+        "name": "Nitrit",
+        "purpose": "Özellikle işlenmiş etlerde koruyucu ve renk sabitleyici olarak kullanılır.",
+        "effect": "Sık tüketimde dikkat gerektirir; ürün türü ve tüketim sıklığı önemlidir."
+    },
+    "e250": {
+        "risk": "high",
+        "name": "E250 - Sodyum nitrit",
+        "purpose": "İşlenmiş etlerde koruyucu ve renk sabitleyici olarak kullanılır.",
+        "effect": "İşlenmiş et tüketimi bağlamında dikkat edilmesi gereken katkılardandır."
+    },
+    "e621": {
+        "risk": "high",
+        "name": "E621 / MSG",
+        "purpose": "Lezzet artırıcı olarak kullanılır.",
+        "effect": "Bazı hassas kişilerde baş ağrısı, rahatsızlık veya hassasiyet bildirimleri olabilir; sık tüketimde dikkat önerilir."
+    },
+    "monosodyum glutamat": {
+        "risk": "high",
+        "name": "Monosodyum glutamat",
+        "purpose": "Lezzet artırıcı olarak kullanılır.",
+        "effect": "Hassas kişilerde rahatsızlık yapabilir; özellikle yoğun işlenmiş gıdalarda dikkat gerektirir."
+    },
+    "glikoz şurubu": {
+        "risk": "high",
+        "name": "Glikoz şurubu",
+        "purpose": "Tatlandırma, kıvam ve raf ömrü için kullanılır.",
+        "effect": "Şeker yükünü artırabilir; sık tüketimde kan şekeri ve kalori alımı açısından dikkat gerektirir."
+    },
+    "fruktoz şurubu": {
+        "risk": "high",
+        "name": "Fruktoz şurubu",
+        "purpose": "Tatlandırıcı şurup olarak kullanılır.",
+        "effect": "Sık tüketimde yüksek şeker alımına katkı sağlayabilir; özellikle içecek ve atıştırmalıklarda dikkat gerektirir."
+    },
+    "mısır şurubu": {
+        "risk": "high",
+        "name": "Mısır şurubu",
+        "purpose": "Tatlandırma ve kıvam için kullanılır.",
+        "effect": "Şeker ve kalori yükünü artırabilir; sık tüketimde dikkat gerektirir."
+    },
+    "hidrojene": {
+        "risk": "high",
+        "name": "Hidrojene yağ",
+        "purpose": "Ürünün kıvamını ve raf dayanımını artırmak için kullanılır.",
+        "effect": "Doymuş/trans yağ içeriği açısından dikkat gerektirebilir; sık tüketimde kalp-damar sağlığı bakımından değerlendirilmelidir."
+    },
+    "trans yağ": {
+        "risk": "high",
+        "name": "Trans yağ",
+        "purpose": "Bazı işlenmiş yağ yapılarında bulunabilir.",
+        "effect": "Sağlık açısından en çok dikkat edilmesi gereken yağ türlerinden biridir; mümkünse düşük tutulması önerilir."
+    },
+    "titanyum dioksit": {
+        "risk": "high",
+        "name": "Titanyum dioksit",
+        "purpose": "Beyazlatıcı/renk düzenleyici olarak kullanılmıştır.",
+        "effect": "Gıda kullanımında bazı bölgelerde tartışmalı kabul edilir; içerikte görülürse dikkat gerektirir."
+    },
+    "e171": {
+        "risk": "high",
+        "name": "E171 - Titanyum dioksit",
+        "purpose": "Beyazlatıcı/renk düzenleyici katkı olarak kullanılır.",
+        "effect": "Gıda kullanımındaki güvenlik tartışmaları nedeniyle dikkat gerektirir."
+    },
+    "formaldehit": {
+        "risk": "high",
+        "name": "Formaldehit / formaldehit salıcılar",
+        "purpose": "Bazı ürünlerde koruyucu sistemlerle ilişkilidir.",
+        "effect": "Cilt hassasiyeti ve alerjik reaksiyon riski açısından dikkat gerektirir."
+    },
+    "triclosan": {
+        "risk": "high",
+        "name": "Triclosan",
+        "purpose": "Antibakteriyel etki için kullanılmıştır.",
+        "effect": "Güvenlik ve çevresel etkiler açısından tartışmalı içeriklerdendir; kozmetikte dikkat gerektirir."
+    },
+    "hydroquinone": {
+        "risk": "high",
+        "name": "Hydroquinone / Hidrokinon",
+        "purpose": "Cilt tonu açıcı ürünlerle ilişkilidir.",
+        "effect": "Ciltte tahriş ve hassasiyet riski nedeniyle uzman kontrolü gerektirebilecek güçlü içeriklerdendir."
+    },
+    "methylisothiazolinone": {
+        "risk": "high",
+        "name": "Methylisothiazolinone",
+        "purpose": "Kozmetiklerde koruyucu olarak kullanılır.",
+        "effect": "Alerjik temas dermatiti ve cilt hassasiyeti açısından dikkat gerektiren koruyuculardandır."
+    },
+    "şeker": {
+        "risk": "medium",
+        "name": "Şeker",
+        "purpose": "Tat vermek ve ürünün lezzet profilini artırmak için kullanılır.",
+        "effect": "Sık tüketimde kalori ve kan şekeri yükünü artırabilir."
+    },
+    "sugar": {
+        "risk": "medium",
+        "name": "Sugar / Şeker",
+        "purpose": "Tatlandırıcı olarak kullanılır.",
+        "effect": "Sık tüketimde toplam şeker alımını artırabilir."
+    },
+    "palm": {
+        "risk": "medium",
+        "name": "Palm yağı",
+        "purpose": "Kıvam, yapı ve raf dayanımı için kullanılır.",
+        "effect": "Doymuş yağ alımına katkı sağlayabilir; sık tüketimde dikkat önerilir."
+    },
+    "aroma": {
+        "risk": "medium",
+        "name": "Aroma",
+        "purpose": "Ürüne belirli tat veya koku profili kazandırmak için kullanılır.",
+        "effect": "Genelde düşük miktarda kullanılır; ancak yoğun işlenmiş ürünlerde içerik kalitesini değerlendirmek için dikkat edilebilir."
+    },
+    "renklendirici": {
+        "risk": "medium",
+        "name": "Renklendirici",
+        "purpose": "Ürüne istenen rengi vermek veya rengi standartlaştırmak için kullanılır.",
+        "effect": "Bazı hassas kişilerde alerji/hassasiyet oluşturabilir; özellikle çocukların sık tükettiği ürünlerde dikkat önerilir."
+    },
+    "colorant": {
+        "risk": "medium",
+        "name": "Colorant / Renklendirici",
+        "purpose": "Ürün rengini vermek veya güçlendirmek için kullanılır.",
+        "effect": "Hassas kişilerde reaksiyon oluşturabilir; sık kullanım/tüketimde dikkat edilebilir."
+    },
+    "koruyucu": {
+        "risk": "medium",
+        "name": "Koruyucu",
+        "purpose": "Ürünün bozulmasını geciktirmek ve raf ömrünü uzatmak için kullanılır.",
+        "effect": "Her koruyucu zararlı değildir; fakat bazı türleri hassas bünyelerde reaksiyon oluşturabilir."
+    },
+    "preservative": {
+        "risk": "medium",
+        "name": "Preservative / Koruyucu",
+        "purpose": "Mikrobiyal bozulmayı azaltmak ve raf ömrünü uzatmak için kullanılır.",
+        "effect": "Hassas cilt veya hassas bünyelerde dikkat gerektirebilir."
+    },
+    "emülgatör": {
+        "risk": "medium",
+        "name": "Emülgatör",
+        "purpose": "Yağ ve su gibi karışması zor bileşenleri bir arada tutmak için kullanılır.",
+        "effect": "Genelde teknolojik katkıdır; yoğun işlenmiş ürünlerde sık tüketim açısından dikkat edilebilir."
+    },
+    "tatlandırıcı": {
+        "risk": "medium",
+        "name": "Tatlandırıcı",
+        "purpose": "Şeker yerine veya şekerle birlikte tat vermek için kullanılır.",
+        "effect": "Türüne ve kullanım sıklığına göre dikkat gerektirebilir."
+    },
+    "sls": {
+        "risk": "medium",
+        "name": "SLS",
+        "purpose": "Temizleyici ve köpürtücü olarak kullanılır.",
+        "effect": "Hassas ciltlerde kuruluk, tahriş veya hassasiyet yapabilir."
+    },
+    "sles": {
+        "risk": "medium",
+        "name": "SLES",
+        "purpose": "Temizleyici ve köpük artırıcı olarak kullanılır.",
+        "effect": "SLS'e göre daha yumuşak kabul edilse de hassas ciltlerde kuruluk ve tahriş yapabilir."
+    },
+    "paraben": {
+        "risk": "medium",
+        "name": "Paraben",
+        "purpose": "Kozmetiklerde koruyucu olarak kullanılır.",
+        "effect": "Bazı tüketicilerde hassasiyet ve endokrin etkiler konusundaki tartışmalar nedeniyle dikkatle değerlendirilir."
+    },
+    "fragrance": {
+        "risk": "medium",
+        "name": "Fragrance / Parfüm",
+        "purpose": "Ürüne koku vermek için kullanılır.",
+        "effect": "Alerjiye yatkın veya hassas ciltlerde reaksiyon oluşturabilir."
+    },
+    "parfüm": {
+        "risk": "medium",
+        "name": "Parfüm",
+        "purpose": "Ürüne koku vermek için kullanılır.",
+        "effect": "Hassas ciltlerde alerji veya tahriş oluşturabilir."
+    },
+    "alkol": {
+        "risk": "medium",
+        "name": "Alkol",
+        "purpose": "Çözücü, kurutucu veya taşıyıcı bileşen olarak kullanılabilir.",
+        "effect": "Hassas veya kuru ciltlerde kuruluk ve tahriş yapabilir."
+    },
+    "phenoxyethanol": {
+        "risk": "medium",
+        "name": "Phenoxyethanol",
+        "purpose": "Kozmetiklerde koruyucu olarak kullanılır.",
+        "effect": "Belirli sınırlar içinde kullanılır; hassas ciltlerde dikkat gerektirebilir."
+    },
+    "paraffinum liquidum": {
+        "risk": "medium",
+        "name": "Paraffinum Liquidum / Mineral yağ",
+        "purpose": "Nem tutucu ve yumuşatıcı etki için kullanılır.",
+        "effect": "Genelde bariyer etkisi sağlar; akneye yatkın veya hassas ciltlerde ürün tipine göre dikkat edilebilir."
+    },
+    "mineral oil": {
+        "risk": "medium",
+        "name": "Mineral oil",
+        "purpose": "Nem tutucu/yumuşatıcı olarak kullanılır.",
+        "effect": "Cilt üzerinde bariyer oluşturur; bazı cilt tiplerinde ağır gelebilir."
+    },
+    "dimethicone": {
+        "risk": "medium",
+        "name": "Dimethicone",
+        "purpose": "Ciltte pürüzsüz his ve koruyucu film etkisi oluşturmak için kullanılır.",
+        "effect": "Genelde iyi tolere edilir; ancak bazı kullanıcılar silikon içerikleri tercih etmeyebilir."
+    },
+}
 
-MEDIUM_TERMS = [
-    # Gıda
-    "şeker", "seker", "sugar", "palm", "aroma", "flavour", "flavor",
-    "renklendirici", "colorant", "koruyucu", "preservative",
-    "emülgatör", "emulgator", "emulsifier", "tatlandırıcı", "tatlandirici",
-    "sweetener", "gluten", "soya", "soy", "nişasta", "nisasta", "starch",
-    # Kozmetik
-    "alkol", "alcohol", "parfüm", "parfum", "fragrance", "sls", "sles",
-    "sodium lauryl sulfate", "sodium laureth sulfate", "paraben",
-    "phenoxyethanol", "mineral oil", "paraffinum liquidum", "silicone",
-    "dimethicone", "petrolatum", "peg-", "ci "
-]
 
-
-def local_content_analysis(text: str, quality: dict) -> dict:
+def find_terms(text: str) -> list[dict]:
     lower = text.lower()
+    found = []
+    seen_names = set()
 
-    high_found = [term for term in HIGH_TERMS if term in lower]
-    medium_found = [term for term in MEDIUM_TERMS if term in lower]
+    # Uzun terimleri önce yakalamak için sıralama.
+    for key in sorted(TERM_INFO.keys(), key=len, reverse=True):
+        if key in lower:
+            item = TERM_INFO[key]
+            if item["name"] not in seen_names:
+                found.append(item)
+                seen_names.add(item["name"])
 
-    if quality["weak"]:
-        return {
-            "title": "🟡 Yazı Net Okunamadı",
-            "message": (
-                "İçerik listesi yeterince net okunamadı. Daha doğru sonuç için ürünü sabitleyip "
-                "içindekiler alanını sarı çerçeveye yaklaştırın."
-            ),
-            "risk": "medium",
-            "read_text": text
-        }
-
-    if high_found:
-        return {
-            "title": "🔴 Yüksek Dikkat",
-            "message": (
-                "Dikkat gerektiren içerikler tespit edildi: "
-                + ", ".join(high_found[:5])
-                + ". Bu değerlendirme bilgilendirme amaçlıdır; nihai karar kullanıcıya aittir."
-            ),
-            "risk": "high",
-            "read_text": text
-        }
-
-    if len(medium_found) >= 1:
-        return {
-            "title": "🟡 Orta Risk",
-            "message": (
-                "Dikkat edilmesi gereken içerikler görüldü: "
-                + ", ".join(medium_found[:6])
-                + ". Hassasiyet, sık tüketim/kullanım ve kişisel durumlar sonucu değiştirebilir."
-            ),
-            "risk": "medium",
-            "read_text": text
-        }
-
-    if not quality["can_be_low"]:
-        return {
-            "title": "🟡 Orta Risk",
-            "message": (
-                "Metin okunabilir ama içerik listesi tam yakalanmamış olabilir. Net karar için "
-                "İçindekiler/Ingredients alanını daha doğrudan okutun."
-            ),
-            "risk": "medium",
-            "read_text": text
-        }
-
-    return {
-        "title": "🟢 Düşük Risk",
-        "message": (
-            "Okunan içerik listesinde belirgin yüksek riskli veya dikkat gerektiren madde yakalanmadı. "
-            "Bu sonuç yalnızca okunan metne göre bilgilendirme amaçlıdır."
-        ),
-        "risk": "low",
-        "read_text": text
-    }
+    return found
 
 
 def risk_rank(risk: str) -> int:
@@ -223,6 +379,95 @@ def normalize_risk(risk: str) -> str:
     return "medium"
 
 
+def risk_title(risk: str) -> str:
+    if risk == "high":
+        return "🔴 Yüksek Dikkat"
+    if risk == "low":
+        return "🟢 Düşük Risk"
+    return "🟡 Dikkat Gerektirir"
+
+
+def local_content_analysis(text: str, quality: dict) -> dict:
+    found = find_terms(text)
+
+    if quality["weak"]:
+        return {
+            "title": "⚠️ İçerik Net Okunamadı",
+            "message": (
+                "İçerik listesi yeterince net okunamadı. Ürünü sabitleyip içindekiler alanını "
+                "daha yakından okutun. Net okunmadan düşük risk sonucu verilmez."
+            ),
+            "risk": "unknown",
+            "read_text": text,
+            "detected_items": []
+        }
+
+    if found:
+        highest = max([item["risk"] for item in found], key=risk_rank)
+        shown = found[:5]
+
+        details = []
+        for item in shown:
+            details.append(
+                f"{item['name']}: {item['purpose']} Sağlık açısından: {item['effect']}"
+            )
+
+        if highest == "high":
+            general = (
+                "Genel değerlendirme: Üründe güçlü dikkat gerektiren içerik bulundu. "
+                "Bu ürün için kullanım/tüketim sıklığı ve kişisel hassasiyet önemlidir."
+            )
+        else:
+            general = (
+                "Genel değerlendirme: Üründe dikkat edilmesi gereken içerikler var. "
+                "Bu doğrudan zararlı anlamına gelmez; ancak sık kullanım/tüketimde değerlendirilmelidir."
+            )
+
+        return {
+            "title": risk_title(highest),
+            "message": "\n\n".join(details + [general, "Nihai karar kullanıcıya aittir."]),
+            "risk": highest,
+            "read_text": text,
+            "detected_items": shown
+        }
+
+    if not quality["can_be_low"]:
+        return {
+            "title": "⚠️ İçerik Net Okunamadı",
+            "message": (
+                "Metin okunabilir görünüyor fakat tam bir içerik listesi yakalanmadı. "
+                "Daha güvenilir sonuç için İçindekiler/Ingredients alanını tekrar okutun."
+            ),
+            "risk": "unknown",
+            "read_text": text,
+            "detected_items": []
+        }
+
+    return {
+        "title": "🟢 Düşük Risk",
+        "message": (
+            "Okunan içerik listesinde belirgin yüksek dikkat gerektiren veya hassasiyet açısından öne çıkan madde yakalanmadı.\n\n"
+            "Bu sonuç yalnızca okunan metne göre bilgilendirme amaçlıdır. İçerik eksik okunduysa değerlendirme değişebilir."
+        ),
+        "risk": "low",
+        "read_text": text,
+        "detected_items": []
+    }
+
+
+def safe_json_loads(text: str) -> dict | None:
+    try:
+        return json.loads(text)
+    except Exception:
+        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except Exception:
+                return None
+    return None
+
+
 @app.post("/analyze-content")
 async def analyze_content(data: ContentRequest):
     raw_text = normalize_text(data.text)
@@ -231,8 +476,8 @@ async def analyze_content(data: ContentRequest):
 
     fallback = local_content_analysis(content_text, quality)
 
-    # Zayıf OCR varsa AI'ya bile sormadan orta risk / net okunamadı döndür.
-    if quality["weak"]:
+    # Okunamadı durumunda risk rengi üretmek yerine unknown döndür.
+    if fallback["risk"] == "unknown":
         return fallback
 
     try:
@@ -244,34 +489,37 @@ async def analyze_content(data: ContentRequest):
                     "content": """
 Sen 'İçinde Ne Var?' uygulamasının gıda ve kozmetik içerik analiz motorusun.
 
-Temel kurallar:
+Kurallar:
+- Tüm cevap Türkçe olacak.
 - Kullanıcıya "al" veya "alma" deme.
 - Kesin tıbbi hüküm verme.
-- Nihai karar kullanıcıya aittir.
-- Emin değilsen ASLA düşük risk verme; medium dön.
-- OCR metni eksik veya içerik listesi tam değilse medium dön.
-- Düşük risk sadece içerik listesi yeterince net ve dikkat gerektiren madde görünmüyorsa verilir.
-- Cevap Türkçe, kısa ve net olsun.
-
-Referans yaklaşımı:
-- Gıda için WHO/FAO JECFA, Codex GSFA, EFSA/FDA güvenlik yaklaşımını dikkate al.
-- Kanserojenlik tehlikesi için IARC sınıflandırma mantığını dikkate al.
-- Kozmetik için paraben, SLS/SLES, alkol, fragrance/parfum, phenoxyethanol, formaldehyde salıcılar,
-  triclosan, hydroquinone, methylisothiazolinone gibi hassasiyet/tartışmalı içerikleri önemse.
+- Nihai karar kullanıcıya ait olduğunu belirt.
+- Sadece "madde var" deme; maddenin ne işe yaradığını ve sağlık açısından neden dikkat gerektirebileceğini açıkla.
+- OCR metni eksik veya içerik listesi tam değilse risk="unknown" döndür.
+- Emin değilsen düşük risk verme.
+- Düşük risk sadece içerik listesi net ve dikkat gerektiren madde görünmüyorsa verilir.
+- Gıda için WHO/FAO JECFA, Codex GSFA, EFSA/FDA güvenlik yaklaşımı ve IARC sınıflandırma mantığını dikkate al.
+- Kozmetik için paraben, SLS/SLES, alkol, fragrance/parfum, phenoxyethanol, formaldehyde salıcılar, triclosan, hydroquinone, methylisothiazolinone gibi hassasiyet/tartışmalı içerikleri önemse.
 
 Risk:
-high = nitrit/nitrat türevleri, aspartam/acesulfame, MSG/E621, trans/hidrojene yağ, titanium dioxide/E171,
-       formaldehyde, triclosan, hydroquinone, methylisothiazolinone gibi güçlü dikkat gerektiren içerikler varsa.
-medium = şeker, palm, aroma, koruyucu, renklendirici, emülgatör, tatlandırıcı, SLS/SLES, paraben,
-         fragrance/parfum, alkol, mineral oil/paraffinum liquidum, phenoxyethanol gibi dikkat içerikleri varsa.
-low = sadece metin net ve belirgin dikkat/yüksek risk maddesi yoksa.
+high = güçlü dikkat gerektiren içerik.
+medium = dikkat/hassasiyet gerektiren içerik.
+low = net okunmuş ve belirgin dikkat gerektiren içerik yok.
+unknown = net okunamadı veya içerik listesi eksik.
 
 JSON dışında hiçbir şey yazma.
 JSON:
 {
-  "title": "🔴/🟡/🟢 kısa başlık",
-  "message": "2-4 kısa cümle. Yakalanan önemli maddeleri belirt. Nihai karar kullanıcıya aittir.",
-  "risk": "high | medium | low"
+  "title": "🔴/🟡/🟢/⚠️ kısa başlık",
+  "risk": "high | medium | low | unknown",
+  "message": "Detaylı ama sade açıklama. Önce önemli maddeleri açıkla: ne işe yarar, sağlık açısından ne anlama gelir. Sonra genel değerlendirme ve 'Nihai karar kullanıcıya aittir.' cümlesi.",
+  "detected_items": [
+    {
+      "name": "Madde adı",
+      "purpose": "Ne işe yarar?",
+      "health_note": "Sağlık açısından değerlendirme"
+    }
+  ]
 }
 """
                 },
@@ -281,38 +529,39 @@ JSON:
                 }
             ],
             temperature=0,
-            max_tokens=350
+            max_tokens=700
         )
 
         result_text = response.choices[0].message.content.strip()
+        ai_result = safe_json_loads(result_text)
 
-        try:
-            ai_result = json.loads(result_text)
-        except Exception:
+        if not ai_result:
             return fallback
 
         ai_risk = normalize_risk(ai_result.get("risk"))
         fallback_risk = fallback["risk"]
 
-        # Güvenlik kuralı: AI, yerel motorun riskini düşüremez.
-        # Örn local medium iken AI low diyorsa medium kalır.
+        # AI, yerel motorun riskini düşüremez.
         if risk_rank(ai_risk) < risk_rank(fallback_risk):
-            final_risk = fallback_risk
-        else:
-            final_risk = ai_risk
-
-        # Ayrıca düşük risk için OCR kalitesi ve içerik benzerliği şart.
-        if final_risk == "low" and not quality["can_be_low"]:
-            final_risk = "medium"
-
-        if final_risk == fallback_risk and fallback_risk != ai_risk:
             return fallback
 
+        if ai_risk == "low" and not quality["can_be_low"]:
+            return {
+                "title": "⚠️ İçerik Net Okunamadı",
+                "message": (
+                    "Metin tam içerik listesi gibi görünmüyor. Düşük risk sonucu vermek için içerik listesinin daha net okunması gerekir."
+                ),
+                "risk": "unknown",
+                "read_text": content_text,
+                "detected_items": []
+            }
+
         return {
-            "title": ai_result.get("title") or fallback["title"],
+            "title": ai_result.get("title") or risk_title(ai_risk),
             "message": ai_result.get("message") or fallback["message"],
-            "risk": final_risk,
-            "read_text": content_text
+            "risk": ai_risk,
+            "read_text": content_text,
+            "detected_items": ai_result.get("detected_items", fallback.get("detected_items", []))
         }
 
     except Exception as e:
@@ -336,7 +585,7 @@ Sen profesyonel bir besin analizi asistanısın.
 Görüntüdeki yemeği/öğünü tahmini analiz et.
 Kesin laboratuvar sonucu gibi konuşma.
 Porsiyon belirsizse tahmini olduğunu belirt.
-Kısa, net, kullanıcı dostu cevap ver.
+Kısa, net, kullanıcı dostu ve Türkçe cevap ver.
 
 Format:
 Enerji: %10
@@ -360,7 +609,7 @@ Kısa yorum: ...
                     ]
                 }
             ],
-            max_tokens=250,
+            max_tokens=300,
             temperature=0.2
         )
 
