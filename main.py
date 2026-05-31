@@ -5,6 +5,8 @@ from openai import OpenAI
 import os
 import json
 import re
+import urllib.parse
+import urllib.request
 
 load_dotenv()
 
@@ -20,6 +22,13 @@ class ContentRequest(BaseModel):
 
 class NutritionRequest(BaseModel):
     image: str
+    language: str = "tr"
+
+
+
+class PriceRequest(BaseModel):
+    image: str | None = None
+    text: str = ""
     language: str = "tr"
 
 
@@ -569,6 +578,254 @@ JSON:
             **fallback,
             "debug": str(e)
         }
+
+
+
+def parse_turkish_price(value) -> float | None:
+    if value is None:
+        return None
+
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    s = str(value)
+    s = s.replace("₺", "").replace("TL", "").replace("tl", "").strip()
+    s = re.sub(r"[^0-9,\.]", "", s)
+
+    if not s:
+        return None
+
+    # Türkiye formatı: 1.299,90
+    if "," in s and "." in s:
+        s = s.replace(".", "").replace(",", ".")
+    elif "," in s:
+        s = s.replace(",", ".")
+
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+
+def clean_product_query(text: str) -> str:
+    clean = normalize_text(text)
+    clean = re.sub(r"\b(içindekiler|icindekiler|ingredients|composition|besin değerleri|nutrition|üretici|son tüketim|tavsiye edilen)\b.*", "", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"[^a-zA-ZğüşöçıİĞÜŞÖÇ0-9\s\-\.,]", " ", clean)
+    clean = re.sub(r"\s+", " ", clean).strip()
+
+    # Çok uzunsa ilk faydalı kısmı al.
+    if len(clean) > 160:
+        clean = clean[:160].strip()
+
+    return clean
+
+
+async def detect_product_for_price(data: PriceRequest) -> dict:
+    text_query = clean_product_query(data.text)
+
+    if data.image:
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4.1-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": """
+Sen fiyat karşılaştırması için ürün tespit motorusun.
+Fotoğraf ve OCR metninden ürün adını, marka/gramaj/model bilgisini çıkar.
+Gıda, kozmetik veya küçük ev eşyası olabilir.
+Kesin değilse en olası kısa arama sorgusunu üret.
+JSON dışında hiçbir şey yazma.
+
+JSON:
+{
+  "query": "Market veya Google Shopping araması için net ürün adı + gramaj/model",
+  "product_name": "Kullanıcıya gösterilecek ürün adı",
+  "confidence": "high | medium | low"
+}
+"""
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"OCR metni: {text_query}\nBu ürün için fiyat karşılaştırma arama sorgusu üret."
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{data.image}"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                temperature=0,
+                max_tokens=200
+            )
+
+            parsed = safe_json_loads(response.choices[0].message.content.strip())
+            if parsed and parsed.get("query"):
+                return {
+                    "query": clean_product_query(parsed.get("query", "")),
+                    "product_name": parsed.get("product_name") or parsed.get("query"),
+                    "confidence": parsed.get("confidence", "medium")
+                }
+        except Exception:
+            pass
+
+    return {
+        "query": text_query,
+        "product_name": text_query or "Ürün",
+        "confidence": "medium" if len(text_query) >= 5 else "low"
+    }
+
+
+def serpapi_google_shopping(query: str) -> list[dict]:
+    api_key = os.getenv("SERPAPI_API_KEY")
+    if not api_key:
+        return []
+
+    params = {
+        "engine": "google_shopping",
+        "q": query,
+        "api_key": api_key,
+        "hl": "tr",
+        "gl": "tr",
+        "google_domain": "google.com.tr",
+        "location": "Turkey",
+        "num": "20",
+    }
+
+    url = "https://serpapi.com/search?" + urllib.parse.urlencode(params)
+
+    with urllib.request.urlopen(url, timeout=25) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+
+    results = payload.get("shopping_results") or []
+
+    clean_results = []
+    for item in results:
+        price = item.get("extracted_price")
+        if price is None:
+            price = parse_turkish_price(item.get("price"))
+
+        if price is None:
+            continue
+
+        title = item.get("title") or "Ürün"
+        source = item.get("source") or item.get("seller") or "Satıcı"
+        link = item.get("link") or item.get("product_link") or ""
+
+        clean_results.append({
+            "title": title,
+            "source": source,
+            "price": float(price),
+            "price_text": item.get("price") or f"{price:.2f} TL",
+            "link": link
+        })
+
+    clean_results.sort(key=lambda x: x["price"])
+    return clean_results[:8]
+
+
+def build_price_message(product_name: str, query: str, results: list[dict]) -> dict:
+    if not results:
+        return {
+            "title": "💰 Fiyat Bilgisi Bulunamadı",
+            "message": (
+                f"Aranan ürün: {product_name or query}\n\n"
+                "Google Shopping tarafında karşılaştırılabilir güncel fiyat bulunamadı. "
+                "Ürün adını/gramajını daha net okutmayı veya barkod/fiyat etiketiyle tekrar denemeyi deneyin."
+            ),
+            "risk": "unknown",
+            "prices": []
+        }
+
+    prices = [r["price"] for r in results]
+    lowest = results[0]
+    average = sum(prices) / len(prices)
+    highest = max(prices)
+
+    if lowest["price"] <= average * 0.90:
+        risk = "low"
+        title = "🟢 Uygun Fiyat"
+        comment = "Bulunan en düşük fiyat, ortalamanın altında görünüyor."
+    elif lowest["price"] <= average * 1.05:
+        risk = "medium"
+        title = "🟡 Ortalama Fiyat"
+        comment = "Fiyatlar piyasa ortalamasına yakın görünüyor."
+    else:
+        risk = "high"
+        title = "🔴 Yüksek Fiyat"
+        comment = "Bulunan fiyatlar ortalamanın üzerinde görünüyor."
+
+    lines = [
+        f"Ürün: {product_name or query}",
+        "",
+        f"En uygun: {lowest['source']} - {lowest['price']:.2f} TL",
+        f"Ortalama: {average:.2f} TL",
+        f"En yüksek: {highest:.2f} TL",
+        "",
+        "Bulunan fiyatlar:"
+    ]
+
+    for r in results[:5]:
+        lines.append(f"• {r['source']}: {r['price']:.2f} TL")
+
+    lines += [
+        "",
+        f"Değerlendirme: {comment}",
+        "Not: Fiyatlar anlık arama sonuçlarından gelir; market, şehir, kampanya ve stok durumuna göre değişebilir."
+    ]
+
+    return {
+        "title": title,
+        "message": "\n".join(lines),
+        "risk": risk,
+        "prices": results
+    }
+
+
+@app.post("/analyze-price")
+async def analyze_price(data: PriceRequest):
+    detected = await detect_product_for_price(data)
+    query = detected.get("query", "").strip()
+    product_name = detected.get("product_name", query)
+
+    if len(query) < 3:
+        return {
+            "title": "💰 Ürün Net Algılanamadı",
+            "message": (
+                "Fiyat karşılaştırması için ürün adı, marka veya gramaj net algılanamadı. "
+                "Ürünün ön yüzünü, barkodunu veya fiyat etiketini daha net göstererek tekrar deneyin."
+            ),
+            "risk": "unknown",
+            "query": query,
+            "prices": []
+        }
+
+    try:
+        results = serpapi_google_shopping(query)
+        output = build_price_message(product_name, query, results)
+        output["query"] = query
+        output["confidence"] = detected.get("confidence", "medium")
+        return output
+
+    except Exception as e:
+        return {
+            "title": "💰 Fiyat Analizi Tamamlanamadı",
+            "message": (
+                "Fiyat karşılaştırması sırasında bağlantı veya API tarafında sorun oluştu. "
+                "Render ortamında SERPAPI_API_KEY tanımlı olduğundan emin olun."
+            ),
+            "risk": "unknown",
+            "query": query,
+            "debug": str(e),
+            "prices": []
+        }
+
 
 
 @app.post("/analyze-nutrition")
