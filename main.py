@@ -735,11 +735,22 @@ def build_price_message(product_name: str, query: str, results: list[dict]) -> d
         return {
             "title": "💰 Fiyat Bilgisi Bulunamadı",
             "message": (
-                f"Aranan ürün: {product_name or query}\n\n"
-                "Google Shopping tarafında karşılaştırılabilir güncel fiyat bulunamadı. "
-                "Ürün adını/gramajını daha net okutmayı veya barkod/fiyat etiketiyle tekrar denemeyi deneyin."
+                f"Ürün: {product_name or query}\n"
+                "Karşılaştırılabilir güncel fiyat bulunamadı. Ürün adı, marka, gramaj veya etiket daha net okutulursa sonuç iyileşir."
             ),
             "risk": "unknown",
+            "price_status": "unknown",
+            "summary": {
+                "product_name": product_name or query,
+                "store_count": 0,
+                "lowest_price": None,
+                "average_price": None,
+                "highest_price": None,
+                "saving_amount": None,
+                "saving_percent": None,
+                "best_store": None,
+                "note": "Fiyat bulunamadı."
+            },
             "prices": []
         }
 
@@ -747,43 +758,52 @@ def build_price_message(product_name: str, query: str, results: list[dict]) -> d
     lowest = results[0]
     average = sum(prices) / len(prices)
     highest = max(prices)
+    saving_amount = max(0.0, average - lowest["price"])
+    saving_percent = (saving_amount / average * 100) if average > 0 else 0.0
 
     if lowest["price"] <= average * 0.90:
         risk = "low"
+        price_status = "good"
         title = "🟢 Uygun Fiyat"
-        comment = "Bulunan en düşük fiyat, ortalamanın altında görünüyor."
+        comment = "Bulunan en düşük fiyat piyasa ortalamasının altında görünüyor."
     elif lowest["price"] <= average * 1.05:
         risk = "medium"
+        price_status = "normal"
         title = "🟡 Ortalama Fiyat"
-        comment = "Fiyatlar piyasa ortalamasına yakın görünüyor."
+        comment = "Bulunan fiyatlar piyasa ortalamasına yakın görünüyor."
     else:
         risk = "high"
+        price_status = "expensive"
         title = "🔴 Yüksek Fiyat"
         comment = "Bulunan fiyatlar ortalamanın üzerinde görünüyor."
 
     lines = [
         f"Ürün: {product_name or query}",
-        "",
+        f"{len(results)} mağaza sonucu karşılaştırıldı.",
         f"En uygun: {lowest['source']} - {lowest['price']:.2f} TL",
         f"Ortalama: {average:.2f} TL",
         f"En yüksek: {highest:.2f} TL",
-        "",
-        "Bulunan fiyatlar:"
-    ]
-
-    for r in results[:5]:
-        lines.append(f"• {r['source']}: {r['price']:.2f} TL")
-
-    lines += [
-        "",
-        f"Değerlendirme: {comment}",
-        "Not: Fiyatlar anlık arama sonuçlarından gelir; market, şehir, kampanya ve stok durumuna göre değişebilir."
+        f"Tasarruf: yaklaşık {saving_amount:.2f} TL (%{saving_percent:.0f})",
+        f"Kısa yorum: {comment}",
+        "Not: Fiyatlar anlık arama sonuçlarına göre değişebilir."
     ]
 
     return {
         "title": title,
         "message": "\n".join(lines),
         "risk": risk,
+        "price_status": price_status,
+        "summary": {
+            "product_name": product_name or query,
+            "store_count": len(results),
+            "lowest_price": round(lowest["price"], 2),
+            "average_price": round(average, 2),
+            "highest_price": round(highest, 2),
+            "saving_amount": round(saving_amount, 2),
+            "saving_percent": round(saving_percent, 1),
+            "best_store": lowest["source"],
+            "note": comment
+        },
         "prices": results
     }
 
@@ -828,6 +848,82 @@ async def analyze_price(data: PriceRequest):
 
 
 
+
+# Besin tarafı: içerik analizi gibi güçlü, JSON tabanlı ve panel dostu çıktı üretir.
+def nutrition_score_from_risk(risk: str) -> int:
+    risk = normalize_risk(risk)
+    if risk == "low":
+        return 78
+    if risk == "medium":
+        return 52
+    if risk == "high":
+        return 24
+    return 0
+
+
+def normalize_nutrition_payload(parsed: dict) -> dict:
+    risk = normalize_risk(parsed.get("risk", "medium")) if parsed else "medium"
+    nutrition = parsed.get("nutrition") if isinstance(parsed.get("nutrition"), dict) else {}
+    alerts = parsed.get("alerts") if isinstance(parsed.get("alerts"), list) else []
+    audience_notes = parsed.get("audience_notes") if isinstance(parsed.get("audience_notes"), dict) else {}
+
+    try:
+        score = int(parsed.get("score"))
+    except Exception:
+        score = nutrition_score_from_risk(risk)
+    score = max(0, min(100, score))
+
+    defaults = {
+        "calories": "Belirsiz",
+        "protein": "Belirsiz",
+        "carbohydrate": "Belirsiz",
+        "fat": "Belirsiz",
+        "sugar": "Belirsiz",
+        "fiber": "Belirsiz",
+        "salt": "Belirsiz",
+    }
+    for key, value in defaults.items():
+        nutrition[key] = str(nutrition.get(key) or value)
+
+    portion = str(parsed.get("portion") or "Belirsiz")
+    nova = str(parsed.get("nova") or "Belirsiz")
+    confidence = str(parsed.get("confidence") or "medium")
+    title = parsed.get("title") or "🟡 Besin Analizi"
+
+    if not alerts:
+        alerts = ["Besin değerleri görselden tahmini olarak hesaplandı."]
+
+    message = parsed.get("message") or (
+        f"Porsiyon: {portion}\n"
+        f"Kalori: {nutrition['calories']}\n"
+        f"Protein: {nutrition['protein']}\n"
+        f"Karbonhidrat: {nutrition['carbohydrate']}\n"
+        f"Yağ: {nutrition['fat']}\n"
+        f"Şeker: {nutrition['sugar']}\n"
+        f"Lif: {nutrition['fiber']}\n"
+        f"Tuz: {nutrition['salt']}\n"
+        f"Kısa yorum: {alerts[0]}"
+    )
+
+    return {
+        "title": title,
+        "message": message,
+        "risk": risk,
+        "score": score,
+        "portion": portion,
+        "nova": nova,
+        "confidence": confidence,
+        "nutrition": nutrition,
+        "alerts": alerts[:6],
+        "audience_notes": {
+            "children": audience_notes.get("children", "Porsiyon ve tüketim sıklığına dikkat edilmelidir."),
+            "diabetes": audience_notes.get("diabetes", "Şeker/karbonhidrat miktarı kişisel duruma göre değerlendirilmelidir."),
+            "sport": audience_notes.get("sport", "Protein ve enerji ihtiyacına göre değerlendirilmelidir."),
+            "weight_control": audience_notes.get("weight_control", "Porsiyon kontrolü önemlidir.")
+        }
+    }
+
+
 @app.post("/analyze-nutrition")
 async def analyze_nutrition(data: NutritionRequest):
     try:
@@ -837,26 +933,55 @@ async def analyze_nutrition(data: NutritionRequest):
                 {
                     "role": "system",
                     "content": """
-Sen profesyonel bir besin analizi asistanısın.
+Sen 'İçinde Ne Var?' uygulamasının profesyonel besin analizi motorusun.
 
-Görüntüdeki yemeği/öğünü tahmini analiz et.
-Kesin laboratuvar sonucu gibi konuşma.
-Porsiyon belirsizse tahmini olduğunu belirt.
-Kısa, net, kullanıcı dostu ve Türkçe cevap ver.
+Görev:
+- Görüntüdeki yemeği, öğünü, paketli ürünü veya besin değerleri tablosunu analiz et.
+- Kesin laboratuvar sonucu gibi konuşma; tahmini olduğunu açıkça belirt.
+- Görsel belirsizse risk="unknown" döndür ve düşük risk verme.
+- Porsiyon tahmini yap. Porsiyon belirsizse aralık ver.
+- Kullanıcı dostu, kısa ama dolu Türkçe çıktı üret.
+- JSON dışında hiçbir şey yazma.
 
-Format:
-Enerji: %10
-Kalori: 550 kcal
-Protein: 20g
-Karbonhidrat: 40g
-Yağ: 18g
-Kısa yorum: ...
+Değerlendirme mantığı:
+- Kalori yoğunluğu, protein kalitesi, karbonhidrat/şeker yükü, yağ oranı, lif ve tuz dengesini birlikte değerlendir.
+- Çok şekerli, çok yağlı, lif/protein düşük veya yoğun işlenmiş görünen ürünlerde skor düşük olmalı.
+- Tabak/yemek fotoğrafında değerler tahmini olmalı; besin etiketi görülüyorsa etiketi öncelikle kullan.
+- NOVA sınıfını tahmini ver: 1 doğal/minimal, 2 işlenmiş mutfak bileşeni, 3 işlenmiş, 4 ultra işlenmiş. Emin değilsen "Belirsiz" yaz.
+- Çocuklar, diyabet, sporcu ve kilo kontrolü için kısa not üret.
+
+Zorunlu JSON:
+{
+  "title": "🟢/🟡/🔴/⚠️ kısa başlık",
+  "risk": "low | medium | high | unknown",
+  "score": 0-100,
+  "portion": "Tahmini porsiyon",
+  "nova": "NOVA 1 | NOVA 2 | NOVA 3 | NOVA 4 | Belirsiz",
+  "confidence": "high | medium | low",
+  "nutrition": {
+    "calories": "... kcal",
+    "protein": "... g",
+    "carbohydrate": "... g",
+    "fat": "... g",
+    "sugar": "... g veya belirsiz",
+    "fiber": "... g veya belirsiz",
+    "salt": "... g veya belirsiz"
+  },
+  "alerts": ["Kısa uyarı 1", "Kısa uyarı 2"],
+  "audience_notes": {
+    "children": "Çocuklar için kısa not",
+    "diabetes": "Diyabet/kan şekeri için kısa not",
+    "sport": "Sporcu/protein açısından kısa not",
+    "weight_control": "Kilo kontrolü için kısa not"
+  },
+  "message": "Porsiyon: ...\nKalori: ...\nProtein: ...\nKarbonhidrat: ...\nYağ: ...\nŞeker: ...\nLif: ...\nTuz: ...\nKısa yorum: ...\nDikkat: ..."
+}
 """
                 },
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "Bu öğünün tahmini besin değerlerini analiz et."},
+                        {"type": "text", "text": "Bu görüntüyü besin değeri açısından analiz et. Görsel belirsizse bunu açıkça belirt."},
                         {
                             "type": "image_url",
                             "image_url": {
@@ -866,21 +991,31 @@ Kısa yorum: ...
                     ]
                 }
             ],
-            max_tokens=300,
-            temperature=0.2
+            max_tokens=900,
+            temperature=0.1
         )
 
-        result = response.choices[0].message.content
+        result_text = response.choices[0].message.content.strip()
+        parsed = safe_json_loads(result_text)
 
-        return {
-            "title": "🟢 Besin Analizi",
-            "message": result,
-            "risk": "low"
-        }
+        if not parsed:
+            return normalize_nutrition_payload({
+                "title": "🟡 Besin Analizi",
+                "message": result_text,
+                "risk": "medium",
+                "score": 50,
+                "nutrition": {},
+                "alerts": ["Model yapılandırılmış JSON döndürmedi; sonuç tahmini olarak gösterildi."]
+            })
+
+        return normalize_nutrition_payload(parsed)
 
     except Exception as e:
-        return {
-            "title": "🟡 Besin Analizi",
+        return normalize_nutrition_payload({
+            "title": "🟡 Besin Analizi Tamamlanamadı",
             "message": f"Besin analizi şu anda tamamlanamadı. Hata: {str(e)}",
-            "risk": "medium"
-        }
+            "risk": "medium",
+            "score": 50,
+            "nutrition": {},
+            "alerts": ["Bağlantı veya analiz sırasında sorun oluştu."]
+        })
