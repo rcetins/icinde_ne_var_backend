@@ -1064,3 +1064,4 @@ Zorunlu JSON:
             "nutrition": {},
             "alerts": ["Bağlantı veya analiz sırasında sorun oluştu."]
         })
+
