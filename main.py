@@ -790,6 +790,8 @@ def build_price_message(product_name: str, query: str, results: list[dict]) -> d
 
     return {
         "title": title,
+        "product_name": product_name,
+        "detected_product": product_name,
         "message": "\n".join(lines),
         "risk": risk,
         "price_status": price_status,
@@ -866,6 +868,16 @@ def normalize_nutrition_payload(parsed: dict) -> dict:
     nutrition = parsed.get("nutrition") if isinstance(parsed.get("nutrition"), dict) else {}
     alerts = parsed.get("alerts") if isinstance(parsed.get("alerts"), list) else []
     audience_notes = parsed.get("audience_notes") if isinstance(parsed.get("audience_notes"), dict) else {}
+    product_name = str(
+        parsed.get("product_name")
+        or parsed.get("detected_food")
+        or parsed.get("detected_product")
+        or ""
+    ).strip()
+    technical_words = ["openai", "api", "logs", "debug", "console", "terminal"]
+    if any(word in product_name.lower() for word in technical_words):
+        product_name = ""
+
 
     try:
         score = int(parsed.get("score"))
@@ -933,9 +945,13 @@ async def analyze_nutrition(data: NutritionRequest):
                 {
                     "role": "system",
                     "content": """
-Sen 'İçinde Ne Var?' uygulamasının profesyonel besin analizi motorusun.
+Sen "İçinde Ne Var?" uygulamasının profesyonel besin analizi motorusun.
 
 Görev:
+- Görseldeki yiyeceği önce tanımla. Yumurta görüyorsan "yumurta", et görüyorsan "et", çay görüyorsan "çay", pilav, makarna, salata vb. ne görünüyorsa product_name alanına yaz.
+- Gıda dışı ekran yazıları, bilgisayar ekranı, OpenAI, API, log, terminal, console metinleri ürün veya gıda adı değildir; bunları product_name olarak yazma.
+- Tabak veya gıda fotoğrafı için OCR metnine güvenme; görselde görünen yiyeceği esas al.
+- Tek bir gıdadan emin değilsen "karışık tabak" veya "gıda analizi" yaz ve confidence="low" döndür.
 - Görüntüdeki yemeği, öğünü, paketli ürünü veya besin değerleri tablosunu analiz et.
 - Kesin laboratuvar sonucu gibi konuşma; tahmini olduğunu açıkça belirt.
 - Görsel belirsizse risk="unknown" döndür ve düşük risk verme.
@@ -952,7 +968,8 @@ Değerlendirme mantığı:
 
 Zorunlu JSON:
 {
-  "title": "🟢/🟡/🔴/⚠️ kısa başlık",
+  "title": "kısa başlık",
+  "product_name": "Görselde tanımlanan gıda veya tabak adı",
   "risk": "low | medium | high | unknown",
   "score": 0-100,
   "portion": "Tahmini porsiyon",
