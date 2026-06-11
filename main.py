@@ -16,7 +16,8 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
 class ContentRequest(BaseModel):
-    text: str
+    text: str = ""
+    image: str | None = None
     language: str = "tr"
 
 
@@ -378,12 +379,12 @@ def risk_rank(risk: str) -> int:
         return 2
     if risk == "low":
         return 1
-    return 2
+    return 0
 
 
 def normalize_risk(risk: str) -> str:
     risk = (risk or "").lower().strip()
-    if risk in ["high", "medium", "low"]:
+    if risk in ["high", "medium", "low", "unknown"]:
         return risk
     return "medium"
 
@@ -482,16 +483,36 @@ async def analyze_content(data: ContentRequest):
     raw_text = normalize_text(data.text)
     content_text = extract_relevant_content(raw_text)
     quality = ocr_quality(content_text)
+    has_image = bool((data.image or "").strip())
 
     fallback = local_content_analysis(content_text, quality)
 
-    # Okunamadı durumunda risk rengi üretmek yerine unknown döndür.
-    if fallback["risk"] == "unknown":
+    # Görsel yoksa ve OCR okunamadıysa risk rengi üretmek yerine unknown döndür.
+    if fallback["risk"] == "unknown" and not has_image:
         return fallback
 
     try:
+        user_content = [
+            {
+                "type": "text",
+                "text": (
+                    "Ürün arka etiketini analiz et.\n"
+                    "Önce görseldeki İçindekiler/Ingredients alanını oku. "
+                    "OCR metni yardımcıdır ama eksik olabilir; görseldeki etiketi esas al.\n\n"
+                    f"Mobil OCR metni:\n{content_text or raw_text}"
+                )
+            }
+        ]
+        if has_image:
+            user_content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{data.image}"
+                }
+            })
+
         response = client.chat.completions.create(
-            model="gpt-4.1-mini",
+            model="gpt-4o-mini",
             messages=[
                 {
                     "role": "system",
@@ -504,7 +525,10 @@ Kurallar:
 - Kesin tıbbi hüküm verme.
 - Nihai karar kullanıcıya ait olduğunu belirt.
 - Sadece "madde var" deme; maddenin ne işe yaradığını ve sağlık açısından neden dikkat gerektirebileceğini açıkla.
-- OCR metni eksik veya içerik listesi tam değilse risk="unknown" döndür.
+- Görsel varsa OCR metnine bağlı kalma; ürün arka etiketindeki İçindekiler/Ingredients alanını görselden oku.
+- Görselden okuduğun içerik listesini read_text alanına mümkün olduğunca tam yaz.
+- Etikette 20-30 madde varsa sadece riskli olanları değil, iyi/nötr maddeleri de detected_items içinde risk="low" olarak döndür.
+- OCR ve görsel birlikte yetersizse risk="unknown" döndür.
 - Emin değilsen düşük risk verme.
 - Düşük risk sadece içerik listesi net ve dikkat gerektiren madde görünmüyorsa verilir.
 - Gıda için WHO/FAO JECFA, Codex GSFA, EFSA/FDA güvenlik yaklaşımı ve IARC sınıflandırma mantığını dikkate al.
@@ -521,10 +545,12 @@ JSON:
 {
   "title": "🔴/🟡/🟢/⚠️ kısa başlık",
   "risk": "high | medium | low | unknown",
+  "read_text": "Görselden/OCR'dan okunan mümkün olan en tam içerik listesi",
   "message": "Detaylı ama sade açıklama. Önce önemli maddeleri açıkla: ne işe yarar, sağlık açısından ne anlama gelir. Sonra genel değerlendirme ve 'Nihai karar kullanıcıya aittir.' cümlesi.",
   "detected_items": [
     {
       "name": "Madde adı",
+      "risk": "high | medium | low",
       "purpose": "Ne işe yarar?",
       "health_note": "Sağlık açısından değerlendirme"
     }
@@ -534,11 +560,11 @@ JSON:
                 },
                 {
                     "role": "user",
-                    "content": f"OCR ile okunan ürün içeriği:\n{content_text}"
+                    "content": user_content
                 }
             ],
             temperature=0,
-            max_tokens=700
+            max_tokens=1100
         )
 
         result_text = response.choices[0].message.content.strip()
@@ -549,19 +575,21 @@ JSON:
 
         ai_risk = normalize_risk(ai_result.get("risk"))
         fallback_risk = fallback["risk"]
+        read_text = normalize_text(ai_result.get("read_text") or content_text)
+        read_quality = ocr_quality(extract_relevant_content(read_text))
 
-        # AI, yerel motorun riskini düşüremez.
-        if risk_rank(ai_risk) < risk_rank(fallback_risk):
+        # AI, yerel motorun riskini düşüremez. OCR tamamen zayıfken görsel analizi bu kilidi açabilir.
+        if fallback_risk != "unknown" and risk_rank(ai_risk) < risk_rank(fallback_risk):
             return fallback
 
-        if ai_risk == "low" and not quality["can_be_low"]:
+        if ai_risk == "low" and not read_quality["can_be_low"]:
             return {
                 "title": "⚠️ İçerik Net Okunamadı",
                 "message": (
-                    "Metin tam içerik listesi gibi görünmüyor. Düşük risk sonucu vermek için içerik listesinin daha net okunması gerekir."
+                    "İçerik listesi tam okunamadı. Düşük risk sonucu vermek için etiketin daha net okunması gerekir."
                 ),
                 "risk": "unknown",
-                "read_text": content_text,
+                "read_text": read_text,
                 "detected_items": []
             }
 
@@ -569,7 +597,7 @@ JSON:
             "title": ai_result.get("title") or risk_title(ai_risk),
             "message": ai_result.get("message") or fallback["message"],
             "risk": ai_risk,
-            "read_text": content_text,
+            "read_text": read_text,
             "detected_items": ai_result.get("detected_items", fallback.get("detected_items", []))
         }
 
