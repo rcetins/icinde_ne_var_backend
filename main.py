@@ -52,7 +52,10 @@ def extract_relevant_content(text: str) -> str:
     start_keywords = [
         "içindekiler", "icindekiler", "ingredients", "ingredient",
         "composition", "contents", "inci", "bileşenler", "bilesenler",
-        "formula", "formül", "formul"
+        "formula", "formül", "formul",
+        "zutaten", "inhaltsstoffe", "bestandteile",
+        "ingrédients", "ingredients", "composition",
+        "成分", "配料", "原料", "原材料"
     ]
 
     start_index = -1
@@ -69,7 +72,10 @@ def extract_relevant_content(text: str) -> str:
         "son tüketim", "son tuketim", "saklama koşulları", "saklama kosullari",
         "menşei", "mensei", "net miktar", "barkod", "barcode", "made in",
         "distributed by", "manufacturer", "www.", "tel:", "customer",
-        "art no", "batch", "lot"
+        "art no", "batch", "lot",
+        "hersteller", "mindestens haltbar", "haltbar bis", "aufbewahrung",
+        "fabriqué par", "distribué par", "à consommer", "conservation",
+        "制造商", "经销商", "保质期", "生产日期", "净含量"
     ]
 
     stop_index = -1
@@ -93,7 +99,9 @@ def ocr_quality(text: str) -> dict:
     has_content_keyword = any(
         k in lower for k in [
             "içindekiler", "icindekiler", "ingredients", "composition",
-            "contents", "inci", "bileşenler", "bilesenler"
+            "contents", "inci", "bileşenler", "bilesenler",
+            "zutaten", "inhaltsstoffe", "ingrédients",
+            "成分", "配料", "原材料"
         ]
     )
 
@@ -510,6 +518,77 @@ TERM_INFO = {
     },
 }
 
+TERM_ALIASES = {
+    # Sweeteners
+    "阿斯巴甜": "aspartame",
+    "acésulfame potassium": "acesulfame potassium",
+    "acésulfame k": "acesulfame k",
+    "acesulfam-k": "acesulfame k",
+    "acesulfam k": "acesulfame k",
+    "安赛蜜": "acesulfame potassium",
+    "乙酰磺胺酸钾": "acesulfame potassium",
+    "sucralose": "sucralose",
+    "三氯蔗糖": "sucralose",
+    "fruktose": "fructose",
+    "果糖": "fructose",
+
+    # Preservatives and acidity regulators
+    "kaliumsorbat": "potassium sorbate",
+    "sorbate de potassium": "potassium sorbate",
+    "山梨酸钾": "potassium sorbate",
+    "sorbinsäure": "sorbic acid",
+    "acide sorbique": "sorbic acid",
+    "山梨酸": "sorbic acid",
+    "natriumcitrat": "sodium citrate",
+    "citrate de sodium": "sodium citrate",
+    "柠檬酸钠": "sodium citrate",
+    "apfelsäure": "malic acid",
+    "acide malique": "malic acid",
+    "苹果酸": "malic acid",
+
+    # Starches, aromas and processing aids
+    "modifizierte stärke": "modified food starch",
+    "amidon modifié": "modified food starch",
+    "变性淀粉": "modified food starch",
+    "modifizierte maisstärke": "modified corn starch",
+    "amidon de maïs modifié": "modified corn starch",
+    "变性玉米淀粉": "modified corn starch",
+    "natürliches aroma": "natural flavor",
+    "natürliche aromen": "natural flavor",
+    "arôme naturel": "natural flavor",
+    "arômes naturels": "natural flavors",
+    "天然香料": "natural flavor",
+
+    # Higher attention additives
+    "mononatriumglutamat": "monosodyum glutamat",
+    "glutamate monosodique": "monosodyum glutamat",
+    "谷氨酸钠": "monosodyum glutamat",
+    "natriumnitrit": "sodyum nitrit",
+    "nitrite de sodium": "sodyum nitrit",
+    "亚硝酸钠": "sodyum nitrit",
+    "nitrit": "nitrit",
+    "nitrite": "nitrit",
+    "亚硝酸盐": "nitrit",
+    "titandioxid": "titanyum dioksit",
+    "dioxyde de titane": "titanyum dioksit",
+    "二氧化钛": "titanyum dioksit",
+    "palmöl": "palm",
+    "huile de palme": "palm",
+    "棕榈油": "palm",
+
+    # Cosmetic labels
+    "parfum": "fragrance",
+    "duftstoff": "fragrance",
+    "香精": "fragrance",
+    "苯氧乙醇": "phenoxyethanol",
+    "甲基异噻唑啉酮": "methylisothiazolinone",
+    "三氯生": "triclosan",
+}
+
+for alias, canonical in TERM_ALIASES.items():
+    if canonical in TERM_INFO:
+        TERM_INFO.setdefault(alias, TERM_INFO[canonical])
+
 
 def find_terms(text: str) -> list[dict]:
     lower = text.lower()
@@ -519,9 +598,9 @@ def find_terms(text: str) -> list[dict]:
     # Uzun terimleri önce yakalamak için sıralama.
     for key in sorted(TERM_INFO.keys(), key=len, reverse=True):
         pattern = (
-            r"(?<![a-zA-ZğüşöçıİĞÜŞÖÇ0-9])"
+            r"(?<![\w])"
             + re.escape(key.lower())
-            + r"(?![a-zA-ZğüşöçıİĞÜŞÖÇ0-9])"
+            + r"(?![\w])"
         )
         if re.search(pattern, lower):
             item = TERM_INFO[key]
@@ -548,6 +627,19 @@ def normalize_risk(risk: str) -> str:
     if risk in ["high", "medium", "low", "unknown"]:
         return risk
     return "medium"
+
+
+def response_language_name(language: str) -> str:
+    code = (language or "tr").lower().strip()
+    if code.startswith("en"):
+        return "English"
+    if code.startswith("de"):
+        return "Deutsch"
+    if code.startswith("fr"):
+        return "Français"
+    if code.startswith("zh") or code.startswith("cn"):
+        return "中文"
+    return "Türkçe"
 
 
 def risk_title(risk: str) -> str:
@@ -687,6 +779,7 @@ async def analyze_content(data: ContentRequest):
     content_text = extract_relevant_content(raw_text)
     quality = ocr_quality(content_text)
     has_image = bool((data.image or "").strip())
+    response_language = response_language_name(data.language)
 
     fallback = local_content_analysis(content_text, quality)
 
@@ -730,7 +823,7 @@ async def analyze_content(data: ContentRequest):
 Sen 'İçinde Ne Var?' uygulamasının gıda ve kozmetik içerik analiz motorusun.
 
 Kurallar:
-- Tüm cevap Türkçe olacak.
+- Tüm cevap __RESPONSE_LANGUAGE__ olacak.
 - Kullanıcıya "al" veya "alma" deme.
 - Kesin tıbbi hüküm verme.
 - Nihai karar kullanıcıya ait olduğunu belirt.
@@ -766,7 +859,7 @@ JSON:
     }
   ]
 }
-"""
+""".replace("__RESPONSE_LANGUAGE__", response_language)
                 },
                 {
                     "role": "user",
