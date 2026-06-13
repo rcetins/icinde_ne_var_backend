@@ -346,6 +346,60 @@ TERM_INFO = {
         "purpose": "Asitlik düzenleyici olarak kullanılır.",
         "effect": "Genelde düşük miktarda kullanılır; hassas kişilerde dikkat edilebilir."
     },
+    "non fat milk": {
+        "risk": "low",
+        "name": "Non fat milk / Yağsız süt",
+        "purpose": "Süt bazlı ana bileşen olarak kullanılır.",
+        "effect": "Süt alerjisi veya laktoz hassasiyeti olan kişiler için dikkat edilmelidir."
+    },
+    "milk": {
+        "risk": "low",
+        "name": "Milk / Süt",
+        "purpose": "Süt bazlı ana bileşen olarak kullanılır.",
+        "effect": "Süt alerjisi veya laktoz hassasiyeti olan kişiler için dikkat edilmelidir."
+    },
+    "water": {
+        "risk": "low",
+        "name": "Water / Su",
+        "purpose": "Çözücü veya ana bileşen olarak kullanılır.",
+        "effect": "Belirgin riskli katkı değildir."
+    },
+    "strawberries": {
+        "risk": "low",
+        "name": "Strawberries / Çilek",
+        "purpose": "Meyve bileşeni olarak kullanılır.",
+        "effect": "Genel olarak olumlu/nötr içeriktir; alerjisi olan kişiler dikkat etmelidir."
+    },
+    "strawberry": {
+        "risk": "low",
+        "name": "Strawberry / Çilek",
+        "purpose": "Meyve bileşeni olarak kullanılır.",
+        "effect": "Genel olarak olumlu/nötr içeriktir; alerjisi olan kişiler dikkat etmelidir."
+    },
+    "vitamin d3": {
+        "risk": "low",
+        "name": "Vitamin D3",
+        "purpose": "Vitamin desteği için kullanılır.",
+        "effect": "Belirgin riskli katkı değildir; miktar ve ürün bağlamı önemlidir."
+    },
+    "vitamin a palmitate": {
+        "risk": "low",
+        "name": "Vitamin A Palmitate",
+        "purpose": "Vitamin A desteği için kullanılır.",
+        "effect": "Palm yağı değildir; vitamin bileşiği olarak değerlendirilir."
+    },
+    "yogurt cultures": {
+        "risk": "low",
+        "name": "Yogurt cultures / Yoğurt kültürleri",
+        "purpose": "Yoğurt kültürü olarak kullanılır.",
+        "effect": "Belirgin riskli katkı değildir."
+    },
+    "l. acidophilus": {
+        "risk": "low",
+        "name": "L. acidophilus",
+        "purpose": "Yoğurt/probiyotik kültür olarak kullanılır.",
+        "effect": "Belirgin riskli katkı değildir."
+    },
     "palm": {
         "risk": "medium",
         "name": "Palm yağı",
@@ -585,6 +639,48 @@ def safe_json_loads(text: str) -> dict | None:
     return None
 
 
+def merge_detected_items(ai_items, *texts: str) -> list[dict]:
+    merged = []
+    seen = set()
+
+    if isinstance(ai_items, list):
+        for item in ai_items:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            key = name.lower()
+            if key in seen:
+                continue
+            merged.append(item)
+            seen.add(key)
+
+    combined_text = "\n".join([str(text or "") for text in texts])
+    for item in find_terms(combined_text):
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        merged.append({
+            "name": name,
+            "risk": item.get("risk", "medium"),
+            "purpose": item.get("purpose", ""),
+            "health_note": item.get("effect", "")
+        })
+        seen.add(key)
+
+    return merged[:30]
+
+
+def highest_risk_from_items(items: list[dict], fallback_risk: str) -> str:
+    risks = [normalize_risk(str(item.get("risk", ""))) for item in items if isinstance(item, dict)]
+    risks.append(normalize_risk(fallback_risk))
+    return max(risks, key=risk_rank)
+
+
 @app.post("/analyze-content")
 async def analyze_content(data: ContentRequest):
     raw_text = normalize_text(data.text)
@@ -707,12 +803,19 @@ JSON:
                 "detected_items": []
             }
 
+        detected_items = merge_detected_items(
+            ai_result.get("detected_items", []),
+            content_text,
+            read_text
+        )
+        final_risk = highest_risk_from_items(detected_items, ai_risk)
+
         return {
-            "title": ai_result.get("title") or risk_title(ai_risk),
+            "title": ai_result.get("title") or risk_title(final_risk),
             "message": ai_result.get("message") or fallback["message"],
-            "risk": ai_risk,
+            "risk": final_risk,
             "read_text": read_text,
-            "detected_items": ai_result.get("detected_items", fallback.get("detected_items", []))
+            "detected_items": detected_items
         }
 
     except Exception as e:
