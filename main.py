@@ -414,10 +414,10 @@ def local_content_analysis(text: str, quality: dict) -> dict:
 
     if found:
         highest = max([item["risk"] for item in found], key=risk_rank)
-        shown = found[:5]
+        shown = found[:24]
 
         details = []
-        for item in shown:
+        for item in shown[:6]:
             details.append(
                 f"{item['name']}: {item['purpose']} Sağlık açısından: {item['effect']}"
             )
@@ -489,6 +489,13 @@ async def analyze_content(data: ContentRequest):
 
     # Görsel yoksa ve OCR okunamadıysa risk rengi üretmek yerine unknown döndür.
     if fallback["risk"] == "unknown" and not has_image:
+        return fallback
+
+    if (
+        fallback.get("risk") != "unknown"
+        and quality.get("can_be_low")
+        and len(fallback.get("detected_items", [])) >= 5
+    ):
         return fallback
 
     try:
@@ -1064,4 +1071,3 @@ Zorunlu JSON:
             "nutrition": {},
             "alerts": ["Bağlantı veya analiz sırasında sorun oluştu."]
         })
-
