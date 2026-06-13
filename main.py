@@ -796,7 +796,7 @@ async def analyze_content(data: ContentRequest):
     fallback = local_content_analysis(content_text, quality)
 
     # Görsel yoksa ve OCR okunamadıysa risk rengi üretmek yerine unknown döndür.
-    if fallback["risk"] == "unknown" and not has_image:
+    if requested_language == "tr" and fallback["risk"] == "unknown" and not has_image:
         return fallback
 
     if (
@@ -895,10 +895,14 @@ JSON:
         read_quality = ocr_quality(extract_relevant_content(read_text))
 
         # AI, yerel motorun riskini düşüremez. OCR tamamen zayıfken görsel analizi bu kilidi açabilir.
-        if fallback_risk != "unknown" and risk_rank(ai_risk) < risk_rank(fallback_risk):
+        if (
+            requested_language == "tr"
+            and fallback_risk != "unknown"
+            and risk_rank(ai_risk) < risk_rank(fallback_risk)
+        ):
             return fallback
 
-        if ai_risk == "low" and not read_quality["can_be_low"]:
+        if requested_language == "tr" and ai_risk == "low" and not read_quality["can_be_low"]:
             return {
                 "title": "⚠️ İçerik Net Okunamadı",
                 "message": (
@@ -909,12 +913,16 @@ JSON:
                 "detected_items": []
             }
 
-        detected_items = merge_detected_items(
-            ai_result.get("detected_items", []),
-            content_text,
-            read_text
-        )
-        final_risk = highest_risk_from_items(detected_items, ai_risk)
+        if requested_language == "tr":
+            detected_items = merge_detected_items(
+                ai_result.get("detected_items", []),
+                content_text,
+                read_text
+            )
+        else:
+            detected_items = merge_detected_items(ai_result.get("detected_items", []))
+        risk_floor = fallback_risk if fallback_risk != "unknown" else ai_risk
+        final_risk = highest_risk_from_items(detected_items, risk_floor)
 
         return {
             "title": ai_result.get("title") or risk_title(final_risk),
