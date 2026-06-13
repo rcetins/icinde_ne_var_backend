@@ -640,6 +640,17 @@ def response_language_name(language: str) -> str:
     if code.startswith("zh") or code.startswith("cn"):
         return "中文"
     return "Türkçe"
+def response_language_code(language: str) -> str:
+    code = (language or "tr").lower().strip()
+    if code.startswith("en"):
+        return "en"
+    if code.startswith("de"):
+        return "de"
+    if code.startswith("fr"):
+        return "fr"
+    if code.startswith("zh") or code.startswith("cn"):
+        return "zh"
+    return "tr"
 
 
 def risk_title(risk: str) -> str:
@@ -779,6 +790,7 @@ async def analyze_content(data: ContentRequest):
     content_text = extract_relevant_content(raw_text)
     quality = ocr_quality(content_text)
     has_image = bool((data.image or "").strip())
+    requested_language = response_language_code(data.language)
     response_language = response_language_name(data.language)
 
     fallback = local_content_analysis(content_text, quality)
@@ -788,7 +800,8 @@ async def analyze_content(data: ContentRequest):
         return fallback
 
     if (
-        fallback.get("risk") != "unknown"
+        requested_language == "tr"
+        and fallback.get("risk") != "unknown"
         and quality.get("can_be_low")
         and len(fallback.get("detected_items", [])) >= 5
     ):
