@@ -136,6 +136,24 @@ TERM_INFO = {
         "purpose": "Kalorisiz tatlandırıcı olarak kullanılır.",
         "effect": "Tek başına kesin zarar hükmü verilemez; fakat sık tüketilen diyet ürünlerde toplam yapay tatlandırıcı yükü açısından dikkat gerektirir."
     },
+    "acesulfame potassium": {
+        "risk": "high",
+        "name": "Acesulfame Potassium / Acesulfam K",
+        "purpose": "Kalorisiz yapay tatlandırıcı olarak kullanılır.",
+        "effect": "Sık tüketilen diyet ürünlerde toplam yapay tatlandırıcı alımı açısından dikkat gerektirir."
+    },
+    "acesulfame k": {
+        "risk": "high",
+        "name": "Acesulfame K / Acesulfam K",
+        "purpose": "Kalorisiz yapay tatlandırıcı olarak kullanılır.",
+        "effect": "Toplam yapay tatlandırıcı yükü açısından dikkatle değerlendirilmelidir."
+    },
+    "aspartame": {
+        "risk": "high",
+        "name": "Aspartame / Aspartam",
+        "purpose": "Şekersiz veya düşük kalorili ürünlerde tatlandırıcı olarak kullanılır.",
+        "effect": "Fenilketonüri hastaları için uygun değildir; hassas kişilerde ve sık tüketimde dikkat gerektirir."
+    },
     "sodyum nitrit": {
         "risk": "high",
         "name": "Sodyum nitrit / Nitrit",
@@ -178,9 +196,21 @@ TERM_INFO = {
         "purpose": "Tatlandırıcı şurup olarak kullanılır.",
         "effect": "Sık tüketimde yüksek şeker alımına katkı sağlayabilir; özellikle içecek ve atıştırmalıklarda dikkat gerektirir."
     },
+    "high fructose corn syrup": {
+        "risk": "high",
+        "name": "High Fructose Corn Syrup",
+        "purpose": "Tatlandırıcı şurup olarak kullanılır.",
+        "effect": "Sık tüketimde şeker ve kalori yükünü artırabilir; özellikle içecek ve tatlı ürünlerde dikkat gerektirir."
+    },
     "mısır şurubu": {
         "risk": "high",
         "name": "Mısır şurubu",
+        "purpose": "Tatlandırma ve kıvam için kullanılır.",
+        "effect": "Şeker ve kalori yükünü artırabilir; sık tüketimde dikkat gerektirir."
+    },
+    "corn syrup": {
+        "risk": "high",
+        "name": "Corn Syrup / Mısır şurubu",
         "purpose": "Tatlandırma ve kıvam için kullanılır.",
         "effect": "Şeker ve kalori yükünü artırabilir; sık tüketimde dikkat gerektirir."
     },
@@ -243,6 +273,78 @@ TERM_INFO = {
         "name": "Sugar / Şeker",
         "purpose": "Tatlandırıcı olarak kullanılır.",
         "effect": "Sık tüketimde toplam şeker alımını artırabilir."
+    },
+    "fructose": {
+        "risk": "medium",
+        "name": "Fructose / Fruktoz",
+        "purpose": "Tatlandırıcı olarak kullanılır.",
+        "effect": "Sık tüketimde toplam şeker yüküne katkı sağlayabilir."
+    },
+    "sucralose": {
+        "risk": "medium",
+        "name": "Sucralose / Sukraloz",
+        "purpose": "Kalorisiz yapay tatlandırıcı olarak kullanılır.",
+        "effect": "Genel limitler içinde kullanılır; sık tüketimde toplam yapay tatlandırıcı alımı açısından dikkat edilebilir."
+    },
+    "potassium sorbate": {
+        "risk": "medium",
+        "name": "Potassium Sorbate / Potasyum sorbat",
+        "purpose": "Küf ve maya gelişimini azaltmak için koruyucu olarak kullanılır.",
+        "effect": "Genelde düşük miktarda kullanılır; hassas kişilerde dikkat gerektirebilir."
+    },
+    "potasyum sorbat": {
+        "risk": "medium",
+        "name": "Potasyum sorbat",
+        "purpose": "Küf ve maya gelişimini azaltmak için koruyucu olarak kullanılır.",
+        "effect": "Genelde düşük miktarda kullanılır; hassas kişilerde dikkat gerektirebilir."
+    },
+    "sorbic acid": {
+        "risk": "medium",
+        "name": "Sorbic Acid / Sorbik asit",
+        "purpose": "Koruyucu olarak kullanılır.",
+        "effect": "Hassas kişilerde dikkat gerektirebilir."
+    },
+    "sorbik asit": {
+        "risk": "medium",
+        "name": "Sorbik asit",
+        "purpose": "Koruyucu olarak kullanılır.",
+        "effect": "Hassas kişilerde dikkat gerektirebilir."
+    },
+    "modified food starch": {
+        "risk": "medium",
+        "name": "Modified Food Starch",
+        "purpose": "Kıvam ve yapı düzenleyici olarak kullanılır.",
+        "effect": "Genelde teknolojik katkıdır; yoğun işlenmiş ürünlerde içerik kalitesi açısından dikkat edilebilir."
+    },
+    "modified corn starch": {
+        "risk": "medium",
+        "name": "Modified Corn Starch",
+        "purpose": "Kıvam ve yapı düzenleyici olarak kullanılır.",
+        "effect": "Genelde teknolojik katkıdır; yoğun işlenmiş ürünlerde dikkat edilebilir."
+    },
+    "natural flavor": {
+        "risk": "medium",
+        "name": "Natural Flavor / Doğal aroma",
+        "purpose": "Ürüne tat ve koku profili vermek için kullanılır.",
+        "effect": "Genelde düşük miktarda kullanılır; içerik şeffaflığı açısından dikkat edilebilir."
+    },
+    "natural flavors": {
+        "risk": "medium",
+        "name": "Natural Flavor / Doğal aroma",
+        "purpose": "Ürüne tat ve koku profili vermek için kullanılır.",
+        "effect": "Genelde düşük miktarda kullanılır; içerik şeffaflığı açısından dikkat edilebilir."
+    },
+    "sodium citrate": {
+        "risk": "medium",
+        "name": "Sodium Citrate / Sodyum sitrat",
+        "purpose": "Asitlik düzenleyici ve stabilizatör olarak kullanılır.",
+        "effect": "Genelde teknolojik katkıdır; sodyum içeriği ve ürünün genel işlenmişliği ile birlikte değerlendirilir."
+    },
+    "malic acid": {
+        "risk": "medium",
+        "name": "Malic Acid / Malik asit",
+        "purpose": "Asitlik düzenleyici olarak kullanılır.",
+        "effect": "Genelde düşük miktarda kullanılır; hassas kişilerde dikkat edilebilir."
     },
     "palm": {
         "risk": "medium",
@@ -362,7 +464,12 @@ def find_terms(text: str) -> list[dict]:
 
     # Uzun terimleri önce yakalamak için sıralama.
     for key in sorted(TERM_INFO.keys(), key=len, reverse=True):
-        if key in lower:
+        pattern = (
+            r"(?<![a-zA-ZğüşöçıİĞÜŞÖÇ0-9])"
+            + re.escape(key.lower())
+            + r"(?![a-zA-ZğüşöçıİĞÜŞÖÇ0-9])"
+        )
+        if re.search(pattern, lower):
             item = TERM_INFO[key]
             if item["name"] not in seen_names:
                 found.append(item)
