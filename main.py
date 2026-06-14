@@ -784,6 +784,40 @@ def highest_risk_from_items(items: list[dict], fallback_risk: str) -> str:
     return max(risks, key=risk_rank)
 
 
+def localized_analysis_unavailable(language_code: str, read_text: str = "") -> dict:
+    messages = {
+        "en": (
+            "Analysis could not be completed clearly. Please scan the ingredients area again with better lighting. "
+            "The final decision belongs to the user."
+        ),
+        "de": (
+            "Die Analyse konnte nicht eindeutig abgeschlossen werden. Bitte scannen Sie den Zutatenbereich bei besserem Licht erneut. "
+            "Die endgültige Entscheidung liegt beim Nutzer."
+        ),
+        "fr": (
+            "L’analyse n’a pas pu être terminée clairement. Veuillez rescanner la zone des ingrédients avec un meilleur éclairage. "
+            "La décision finale appartient à l’utilisateur."
+        ),
+        "zh": "分析未能清晰完成。请在更好的光线下重新扫描成分区域。最终决定由用户自行作出。",
+    }
+    titles = {
+        "en": "Analysis incomplete",
+        "de": "Analyse unvollständig",
+        "fr": "Analyse incomplète",
+        "zh": "分析未完成",
+    }
+    return {
+        "title": titles.get(language_code, "Analiz tamamlanamadı"),
+        "message": messages.get(
+            language_code,
+            "Analiz net tamamlanamadı. Daha iyi ışıkta içerik alanını tekrar okutun. Nihai karar kullanıcıya aittir.",
+        ),
+        "risk": "unknown",
+        "read_text": read_text,
+        "detected_items": [],
+    }
+
+
 @app.post("/analyze-content")
 async def analyze_content(data: ContentRequest):
     raw_text = normalize_text(data.text)
@@ -837,6 +871,9 @@ Sen 'İçinde Ne Var?' uygulamasının gıda ve kozmetik içerik analiz motorusu
 
 Kurallar:
 - Tüm cevap __RESPONSE_LANGUAGE__ olacak.
+- JSON içindeki title, message, detected_items[].name, detected_items[].purpose ve detected_items[].health_note alanlarının tamamı __RESPONSE_LANGUAGE__ olacak.
+- Etiket veya OCR metni Türkçe olsa bile kullanıcı dili __RESPONSE_LANGUAGE__ ise madde adlarını ve açıklamaları __RESPONSE_LANGUAGE__ diline çevir.
+- E kodları, katkı kodları ve teknik kimlikler korunabilir; ancak kullanıcıya görünen açıklama dili __RESPONSE_LANGUAGE__ kalacak.
 - Kullanıcıya "al" veya "alma" deme.
 - Kesin tıbbi hüküm verme.
 - Nihai karar kullanıcıya ait olduğunu belirt.
@@ -865,10 +902,10 @@ JSON:
   "message": "Detaylı ama sade açıklama. Önce önemli maddeleri açıkla: ne işe yarar, sağlık açısından ne anlama gelir. Sonra genel değerlendirme ve 'Nihai karar kullanıcıya aittir.' cümlesi.",
   "detected_items": [
     {
-      "name": "Madde adı",
+      "name": "Madde adı, kullanıcı diline çevrilmiş",
       "risk": "high | medium | low",
-      "purpose": "Ne işe yarar?",
-      "health_note": "Sağlık açısından değerlendirme"
+      "purpose": "Ne işe yarar? Kullanıcı dilinde yaz.",
+      "health_note": "Sağlık açısından değerlendirme. Kullanıcı dilinde yaz."
     }
   ]
 }
@@ -887,6 +924,8 @@ JSON:
         ai_result = safe_json_loads(result_text)
 
         if not ai_result:
+            if requested_language != "tr":
+                return localized_analysis_unavailable(requested_language, content_text)
             return fallback
 
         ai_risk = normalize_risk(ai_result.get("risk"))
