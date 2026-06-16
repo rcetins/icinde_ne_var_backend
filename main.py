@@ -5,6 +5,7 @@ from openai import OpenAI
 import os
 import json
 import re
+import math
 import urllib.parse
 import urllib.request
 
@@ -31,6 +32,9 @@ class PriceRequest(BaseModel):
     image: str | None = None
     text: str = ""
     language: str = "tr"
+    latitude: float | None = None
+    longitude: float | None = None
+    distance: float | None = 5
 
 
 @app.get("/")
@@ -1079,52 +1083,93 @@ JSON:
         "confidence": "medium" if len(text_query) >= 5 else "low"
     }
 
+def distance_km(lat1, lon1, lat2, lon2) -> float | None:
+    if None in (lat1, lon1, lat2, lon2):
+        return None
+    try:
+        radius = 6371.0
+        p1 = math.radians(float(lat1))
+        p2 = math.radians(float(lat2))
+        dp = math.radians(float(lat2) - float(lat1))
+        dl = math.radians(float(lon2) - float(lon1))
+        a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+        return radius * (2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
+    except Exception:
+        return None
 
-def serpapi_google_shopping(query: str) -> list[dict]:
-    api_key = os.getenv("SERPAPI_API_KEY")
-    if not api_key:
-        return []
 
-    params = {
-        "engine": "google_shopping",
-        "q": query,
-        "api_key": api_key,
-        "hl": "tr",
-        "gl": "tr",
-        "google_domain": "google.com.tr",
-        "location": "Turkey",
-        "num": "20",
+def marketfiyati_search(query: str, latitude=None, longitude=None, distance=5) -> list[dict]:
+    body = {
+        "keywords": query,
+        "pages": 0,
+        "size": 12,
     }
+    if latitude is not None and longitude is not None:
+        body["latitude"] = latitude
+        body["longitude"] = longitude
+        body["distance"] = distance or 5
 
-    url = "https://serpapi.com/search?" + urllib.parse.urlencode(params)
+    request = urllib.request.Request(
+        "https://api.marketfiyati.org.tr/api/v2/search",
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Origin": "https://marketfiyati.org.tr",
+            "Referer": "https://marketfiyati.org.tr/",
+            "User-Agent": "Mozilla/5.0",
+        },
+        method="POST",
+    )
 
-    with urllib.request.urlopen(url, timeout=25) as response:
+    with urllib.request.urlopen(request, timeout=15) as response:
         payload = json.loads(response.read().decode("utf-8"))
 
-    results = payload.get("shopping_results") or []
-
     clean_results = []
-    for item in results:
-        price = item.get("extracted_price")
-        if price is None:
-            price = parse_turkish_price(item.get("price"))
+    seen = set()
+    for product in payload.get("content") or []:
+        title = product.get("title") or query
+        brand = product.get("brand") or ""
+        image_url = product.get("imageUrl") or ""
+        for offer in product.get("productDepotInfoList") or []:
+            price = parse_turkish_price(offer.get("price"))
+            if price is None:
+                continue
 
-        if price is None:
-            continue
+            source = offer.get("marketAdi") or "market"
+            depot_name = offer.get("depotName") or source
+            lat = offer.get("latitude")
+            lon = offer.get("longitude")
+            dist = distance_km(latitude, longitude, lat, lon)
+            key = (source, depot_name, round(price, 2), title)
+            if key in seen:
+                continue
+            seen.add(key)
 
-        title = item.get("title") or "Ürün"
-        source = item.get("source") or item.get("seller") or "Satıcı"
-        link = item.get("link") or item.get("product_link") or ""
+            clean_results.append({
+                "title": title,
+                "brand": brand,
+                "source": source,
+                "store": source,
+                "depot_name": depot_name,
+                "price": float(price),
+                "price_text": f"{price:.2f} TL",
+                "unit_price": offer.get("unitPrice"),
+                "image_url": image_url,
+                "index_time": offer.get("indexTime"),
+                "latitude": lat,
+                "longitude": lon,
+                "distance_km": round(dist, 2) if dist is not None else None,
+                "distance_text": f"{dist:.1f} km" if dist is not None else None,
+                "map_url": (
+                    f"https://www.google.com/maps/search/?api=1&query={lat},{lon}"
+                    if lat is not None and lon is not None else ""
+                ),
+                "link": f"https://marketfiyati.org.tr/ara?q={urllib.parse.quote(query)}",
+            })
 
-        clean_results.append({
-            "title": title,
-            "source": source,
-            "price": float(price),
-            "price_text": item.get("price") or f"{price:.2f} TL",
-            "link": link
-        })
-
-    clean_results.sort(key=lambda x: x["price"])
+    clean_results.sort(key=lambda x: (x["price"], x.get("distance_km") or 9999))
+    for index, item in enumerate(clean_results):
+        item["best"] = index == 0
     return clean_results[:8]
 
 
@@ -1227,7 +1272,7 @@ async def analyze_price(data: PriceRequest):
         }
 
     try:
-        results = serpapi_google_shopping(query)
+        results = marketfiyati_search(query, data.latitude, data.longitude, data.distance)
         output = build_price_message(product_name, query, results)
         output["query"] = query
         output["confidence"] = detected.get("confidence", "medium")
@@ -1238,7 +1283,7 @@ async def analyze_price(data: PriceRequest):
             "title": "💰 Fiyat Analizi Tamamlanamadı",
             "message": (
                 "Fiyat karşılaştırması sırasında bağlantı veya API tarafında sorun oluştu. "
-                "Render ortamında SERPAPI_API_KEY tanımlı olduğundan emin olun."
+                "Market Fiyatı verisine ulaşılamadı. Biraz sonra tekrar deneyin."
             ),
             "risk": "unknown",
             "query": query,
