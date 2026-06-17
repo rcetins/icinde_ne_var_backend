@@ -5,7 +5,6 @@ from openai import OpenAI
 import os
 import json
 import re
-import math
 import urllib.parse
 import urllib.request
 
@@ -32,9 +31,6 @@ class PriceRequest(BaseModel):
     image: str | None = None
     text: str = ""
     language: str = "tr"
-    latitude: float | None = None
-    longitude: float | None = None
-    distance: float | None = 5
 
 
 @app.get("/")
@@ -1083,31 +1079,12 @@ JSON:
         "confidence": "medium" if len(text_query) >= 5 else "low"
     }
 
-def distance_km(lat1, lon1, lat2, lon2) -> float | None:
-    if None in (lat1, lon1, lat2, lon2):
-        return None
-    try:
-        radius = 6371.0
-        p1 = math.radians(float(lat1))
-        p2 = math.radians(float(lat2))
-        dp = math.radians(float(lat2) - float(lat1))
-        dl = math.radians(float(lon2) - float(lon1))
-        a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-        return radius * (2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
-    except Exception:
-        return None
-
-
-def marketfiyati_search(query: str, latitude=None, longitude=None, distance=5) -> list[dict]:
+def marketfiyati_search(query: str) -> list[dict]:
     body = {
         "keywords": query,
         "pages": 0,
         "size": 12,
     }
-    if latitude is not None and longitude is not None:
-        body["latitude"] = latitude
-        body["longitude"] = longitude
-        body["distance"] = distance or 5
 
     request = urllib.request.Request(
         "https://api.marketfiyati.org.tr/api/v2/search",
@@ -1137,9 +1114,6 @@ def marketfiyati_search(query: str, latitude=None, longitude=None, distance=5) -
 
             source = offer.get("marketAdi") or "market"
             depot_name = offer.get("depotName") or source
-            lat = offer.get("latitude")
-            lon = offer.get("longitude")
-            dist = distance_km(latitude, longitude, lat, lon)
             key = (source, depot_name, round(price, 2), title)
             if key in seen:
                 continue
@@ -1156,21 +1130,32 @@ def marketfiyati_search(query: str, latitude=None, longitude=None, distance=5) -
                 "unit_price": offer.get("unitPrice"),
                 "image_url": image_url,
                 "index_time": offer.get("indexTime"),
-                "latitude": lat,
-                "longitude": lon,
-                "distance_km": round(dist, 2) if dist is not None else None,
-                "distance_text": f"{dist:.1f} km" if dist is not None else None,
-                "map_url": (
-                    f"https://www.google.com/maps/search/?api=1&query={lat},{lon}"
-                    if lat is not None and lon is not None else ""
-                ),
-                "link": f"https://marketfiyati.org.tr/ara?q={urllib.parse.quote(query)}",
+                "url": market_website_url(source, title or query),
+                "link": market_website_url(source, title or query),
             })
 
-    clean_results.sort(key=lambda x: (x["price"], x.get("distance_km") or 9999))
+    clean_results.sort(key=lambda x: x["price"])
     for index, item in enumerate(clean_results):
         item["best"] = index == 0
     return clean_results[:8]
+
+
+def market_website_url(source: str, query: str) -> str:
+    market = (source or "").lower().strip()
+    q = urllib.parse.quote(query or "")
+    if market == "migros":
+        return f"https://www.migros.com.tr/arama?q={q}"
+    if market == "a101":
+        return f"https://www.a101.com.tr/arama/?q={q}"
+    if market == "bim":
+        return "https://www.bim.com.tr/"
+    if market == "sok":
+        return f"https://www.sokmarket.com.tr/arama?q={q}"
+    if market == "carrefour":
+        return f"https://www.carrefoursa.com/arama?text={q}"
+    if market == "tarim_kredi":
+        return "https://www.tarimkredikooperatifmarket.com.tr/"
+    return f"https://www.google.com/search?q={urllib.parse.quote((source or 'market') + ' ' + (query or ''))}"
 
 
 def build_price_message(product_name: str, query: str, results: list[dict]) -> dict:
@@ -1272,7 +1257,7 @@ async def analyze_price(data: PriceRequest):
         }
 
     try:
-        results = marketfiyati_search(query, data.latitude, data.longitude, data.distance)
+        results = marketfiyati_search(query)
         output = build_price_message(product_name, query, results)
         output["query"] = query
         output["confidence"] = detected.get("confidence", "medium")
