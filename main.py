@@ -516,6 +516,108 @@ TERM_INFO = {
         "purpose": "Ciltte pürüzsüz his ve koruyucu film etkisi oluşturmak için kullanılır.",
         "effect": "Genelde iyi tolere edilir; ancak bazı kullanıcılar silikon içerikleri tercih etmeyebilir."
     },
+    "sodyum hidroksit": {
+        "risk": "high",
+        "name": "Sodyum hidroksit",
+        "purpose": "Yağ ve kirleri çözmek, ürünün pH seviyesini düzenlemek için kullanılır.",
+        "effect": "Korozif olabilir; ciltte ve gözde ciddi tahriş veya yanık riski oluşturabilir. Etiket talimatlarına kesinlikle uyulmalıdır."
+    },
+    "sodium hydroxide": {
+        "risk": "high",
+        "name": "Sodyum hidroksit",
+        "purpose": "Yağ ve kirleri çözmek, ürünün pH seviyesini düzenlemek için kullanılır.",
+        "effect": "Korozif olabilir; ciltte ve gözde ciddi tahriş veya yanık riski oluşturabilir. Etiket talimatlarına kesinlikle uyulmalıdır."
+    },
+    "sodyum hipoklorit": {
+        "risk": "high",
+        "name": "Sodyum hipoklorit / Aktif klor",
+        "purpose": "Ağartma, dezenfeksiyon ve mikrobiyal temizlik için kullanılır.",
+        "effect": "Cilt, göz ve solunum yollarını tahriş edebilir. Asit veya amonyak içeren ürünlerle kesinlikle karıştırılmamalıdır."
+    },
+    "sodium hypochlorite": {
+        "risk": "high",
+        "name": "Sodyum hipoklorit / Aktif klor",
+        "purpose": "Ağartma, dezenfeksiyon ve mikrobiyal temizlik için kullanılır.",
+        "effect": "Cilt, göz ve solunum yollarını tahriş edebilir. Asit veya amonyak içeren ürünlerle kesinlikle karıştırılmamalıdır."
+    },
+    "aktif klor": {
+        "risk": "high",
+        "name": "Aktif klor",
+        "purpose": "Ağartıcı ve dezenfektan etki sağlar.",
+        "effect": "Tahriş edici gaz oluşturma riski nedeniyle asit ve amonyak içeren temizleyicilerle karıştırılmamalıdır."
+    },
+    "amonyak": {
+        "risk": "high",
+        "name": "Amonyak",
+        "purpose": "Yağ ve kir çözme amacıyla bazı temizlik ürünlerinde kullanılır.",
+        "effect": "Buharı gözleri ve solunum yollarını tahriş edebilir. Klorlu ürünlerle karıştırılması tehlikelidir."
+    },
+    "ammonia": {
+        "risk": "high",
+        "name": "Amonyak",
+        "purpose": "Yağ ve kir çözme amacıyla bazı temizlik ürünlerinde kullanılır.",
+        "effect": "Buharı gözleri ve solunum yollarını tahriş edebilir. Klorlu ürünlerle karıştırılması tehlikelidir."
+    },
+    "hidroklorik asit": {
+        "risk": "high",
+        "name": "Hidroklorik asit",
+        "purpose": "Kireç, pas ve mineral kalıntılarını çözmek için kullanılır.",
+        "effect": "Koroziftir; klorlu ürünlerle karıştırıldığında tehlikeli gaz açığa çıkarabilir."
+    },
+    "hydrochloric acid": {
+        "risk": "high",
+        "name": "Hidroklorik asit",
+        "purpose": "Kireç, pas ve mineral kalıntılarını çözmek için kullanılır.",
+        "effect": "Koroziftir; klorlu ürünlerle karıştırıldığında tehlikeli gaz açığa çıkarabilir."
+    },
+    "benzalkonyum klorür": {
+        "risk": "high",
+        "name": "Benzalkonyum klorür",
+        "purpose": "Dezenfektan ve antimikrobiyal yüzey aktif madde olarak kullanılır.",
+        "effect": "Yoğun temas ciltte, gözde ve solunum yollarında tahrişe neden olabilir."
+    },
+    "benzalkonium chloride": {
+        "risk": "high",
+        "name": "Benzalkonyum klorür",
+        "purpose": "Dezenfektan ve antimikrobiyal yüzey aktif madde olarak kullanılır.",
+        "effect": "Yoğun temas ciltte, gözde ve solunum yollarında tahrişe neden olabilir."
+    },
+    "noniyonik yüzey aktif madde": {
+        "risk": "medium",
+        "name": "Noniyonik yüzey aktif madde",
+        "purpose": "Yağ ve kirin yüzeyden ayrılmasına yardımcı olur.",
+        "effect": "Ürün yoğunluğuna göre cilt ve göz tahrişine neden olabilir; doğrudan temastan kaçınılmalıdır."
+    },
+    "nonionic surfactant": {
+        "risk": "medium",
+        "name": "Noniyonik yüzey aktif madde",
+        "purpose": "Yağ ve kirin yüzeyden ayrılmasına yardımcı olur.",
+        "effect": "Ürün yoğunluğuna göre cilt ve göz tahrişine neden olabilir; doğrudan temastan kaçınılmalıdır."
+    },
+    "anyonik yüzey aktif madde": {
+        "risk": "medium",
+        "name": "Anyonik yüzey aktif madde",
+        "purpose": "Temizleme ve köpürme etkisi sağlar.",
+        "effect": "Hassas ciltlerde kuruluk ve tahriş oluşturabilir; gözle temasından kaçınılmalıdır."
+    },
+    "anionic surfactant": {
+        "risk": "medium",
+        "name": "Anyonik yüzey aktif madde",
+        "purpose": "Temizleme ve köpürme etkisi sağlar.",
+        "effect": "Hassas ciltlerde kuruluk ve tahriş oluşturabilir; gözle temasından kaçınılmalıdır."
+    },
+    "hidrojen peroksit": {
+        "risk": "medium",
+        "name": "Hidrojen peroksit",
+        "purpose": "Ağartma, leke çıkarma ve oksitleyici temizlik için kullanılır.",
+        "effect": "Konsantrasyona bağlı olarak cilt ve göz tahrişine neden olabilir."
+    },
+    "hydrogen peroxide": {
+        "risk": "medium",
+        "name": "Hidrojen peroksit",
+        "purpose": "Ağartma, leke çıkarma ve oksitleyici temizlik için kullanılır.",
+        "effect": "Konsantrasyona bağlı olarak cilt ve göz tahrişine neden olabilir."
+    },
 }
 
 TERM_ALIASES = {
@@ -742,6 +844,31 @@ def safe_json_loads(text: str) -> dict | None:
     return None
 
 
+def is_instruction_or_warning_text(value: str) -> bool:
+    lower = normalize_text(value).lower().translate(str.maketrans({
+        "ç": "c", "ğ": "g", "ı": "i", "ö": "o", "ş": "s", "ü": "u",
+    }))
+    if not lower:
+        return True
+
+    instruction_phrases = [
+        "kisinin bilinci", "bilinci acik", "ilk yardim",
+        "goz ile temas", "gozle temas", "derhal", "doktor",
+        "zehir danisma", "iyice karistir", "kullanmadan once",
+        "kullanim talimat", "durulayin", "cocuklarin ulasamayacagi",
+        "eldiven kullan", "yutulmasi halinde", "paslanmaz celik",
+        "uygun degildir", "sadece kullanim",
+    ]
+    if any(phrase in lower for phrase in instruction_phrases):
+        return True
+
+    instruction_verbs = [
+        "uygulayin", "bekletin", "temizleyin", "karistirin",
+        "kullaniniz", "saklayiniz", "basvurun", "cikarin",
+    ]
+    return any(verb in lower for verb in instruction_verbs)
+
+
 def merge_detected_items(ai_items, *texts: str) -> list[dict]:
     merged = []
     seen = set()
@@ -751,7 +878,7 @@ def merge_detected_items(ai_items, *texts: str) -> list[dict]:
             if not isinstance(item, dict):
                 continue
             name = str(item.get("name") or "").strip()
-            if not name:
+            if not name or is_instruction_or_warning_text(name):
                 continue
             key = name.lower()
             if key in seen:
@@ -766,6 +893,14 @@ def merge_detected_items(ai_items, *texts: str) -> list[dict]:
             continue
         key = name.lower()
         if key in seen:
+            for existing in merged:
+                if str(existing.get("name") or "").strip().lower() != key:
+                    continue
+                if risk_rank(item.get("risk", "")) > risk_rank(existing.get("risk", "")):
+                    existing["risk"] = item.get("risk", "medium")
+                    existing["purpose"] = item.get("purpose", "")
+                    existing["health_note"] = item.get("effect", "")
+                break
             continue
         merged.append({
             "name": name,
@@ -846,8 +981,8 @@ async def analyze_content(data: ContentRequest):
             {
                 "type": "text",
                 "text": (
-                    "Ürün arka etiketini analiz et.\n"
-                    "Önce görseldeki İçindekiler/Ingredients alanını oku. "
+                    "Ürün arka etiketini analiz et. Ürün gıda, kozmetik/kişisel bakım veya temizlik ürünü olabilir.\n"
+                    "Önce görseldeki İçindekiler/Ingredients/Composition/Bileşenler alanını oku. "
                     "OCR metni yardımcıdır ama eksik olabilir; görseldeki etiketi esas al.\n\n"
                     f"Mobil OCR metni:\n{content_text or raw_text}"
                 )
@@ -867,7 +1002,7 @@ async def analyze_content(data: ContentRequest):
                 {
                     "role": "system",
                     "content": """
-Sen 'İçinde Ne Var?' uygulamasının gıda ve kozmetik içerik analiz motorusun.
+Sen 'İçinde Ne Var?' uygulamasının gıda, kozmetik/kişisel bakım ve temizlik ürünü içerik analiz motorusun.
 
 Kurallar:
 - Tüm cevap __RESPONSE_LANGUAGE__ olacak.
@@ -886,6 +1021,10 @@ Kurallar:
 - Düşük risk sadece içerik listesi net ve dikkat gerektiren madde görünmüyorsa verilir.
 - Gıda için WHO/FAO JECFA, Codex GSFA, EFSA/FDA güvenlik yaklaşımı ve IARC sınıflandırma mantığını dikkate al.
 - Kozmetik için paraben, SLS/SLES, alkol, fragrance/parfum, phenoxyethanol, formaldehyde salıcılar, triclosan, hydroquinone, methylisothiazolinone gibi hassasiyet/tartışmalı içerikleri önemse.
+- Temizlik ürünlerinde sodyum hipoklorit/aktif klor, sodyum hidroksit, amonyak, güçlü asitler ve benzalkonyum klorür gibi korozif veya güçlü tahriş edici maddeleri high olarak değerlendir.
+- Anyonik/noniyonik yüzey aktif maddeler, parfüm, enzimler ve hidrojen peroksit gibi bileşenleri ürün yoğunluğu ve temas riski açısından medium olarak değerlendir.
+- Klorlu ürünlerin asit veya amonyakla karıştırılmaması gerektiğini kritik güvenlik uyarısı olarak belirt.
+- Kullanım talimatı, ilk yardım cümlesi, yüzey uyumluluğu, saklama uyarısı ve "iyice karıştırın" gibi emir cümlelerini içerik maddesi olarak detected_items listesine ekleme.
 
 Risk:
 high = güçlü dikkat gerektiren içerik.
@@ -1083,7 +1222,7 @@ def marketfiyati_search(query: str) -> list[dict]:
     body = {
         "keywords": query,
         "pages": 0,
-        "size": 12,
+        "size": 40,
     }
 
     request = urllib.request.Request(
@@ -1135,9 +1274,7 @@ def marketfiyati_search(query: str) -> list[dict]:
             })
 
     clean_results.sort(key=lambda x: x["price"])
-    for index, item in enumerate(clean_results):
-        item["best"] = index == 0
-    return clean_results[:8]
+    return clean_results
 
 
 def price_query_variants(query: str) -> list[str]:
@@ -1178,13 +1315,99 @@ def price_query_variants(query: str) -> list[str]:
     return variants[:7]
 
 
+def _price_match_tokens(value: str) -> set[str]:
+    normalized = (value or "").lower().translate(str.maketrans({
+        "ç": "c", "ğ": "g", "ı": "i", "ö": "o", "ş": "s", "ü": "u",
+    }))
+    normalized = re.sub(
+        r"\b\d+([,.]\d+)?\s*(g|gr|gram|kg|ml|lt|l|adet)\b",
+        " ",
+        normalized,
+    )
+    normalized = re.sub(r"[^a-z0-9\s]", " ", normalized)
+    ignored = {
+        "ve", "ile", "icin", "urun", "yeni", "paket", "ekonomik",
+    }
+    return {
+        token
+        for token in re.sub(r"\s+", " ", normalized).strip().split()
+        if len(token) >= 2 and token not in ignored
+    }
+
+
+def _price_result_score(query: str, result: dict) -> float:
+    query_tokens = _price_match_tokens(query)
+    title_tokens = _price_match_tokens(
+        f"{result.get('brand', '')} {result.get('title', '')}"
+    )
+    if not query_tokens or not title_tokens:
+        return 0.0
+    overlap = query_tokens & title_tokens
+    score = len(overlap) / len(query_tokens)
+    first_token = re.sub(r"[^a-z0-9]", "", query.lower().translate(str.maketrans({
+        "ç": "c", "ğ": "g", "ı": "i", "ö": "o", "ş": "s", "ü": "u",
+    })).split()[0]) if query.strip() else ""
+    if first_token and first_token in title_tokens:
+        score += 0.25
+
+    def amounts(value: str) -> set[int]:
+        found = set()
+        normalized = (value or "").lower().replace(",", ".")
+        for number, unit in re.findall(
+            r"(\d+(?:\.\d+)?)\s*(kg|g|gr|gram|lt|l|ml)\b",
+            normalized,
+        ):
+            amount = float(number)
+            if unit == "kg":
+                amount *= 1000
+            elif unit in {"lt", "l"}:
+                amount *= 1000
+            found.add(round(amount))
+        return found
+
+    query_amounts = amounts(query)
+    title_amounts = amounts(str(result.get("title") or ""))
+    if query_amounts and title_amounts:
+        if query_amounts & title_amounts:
+            score += 0.60
+        else:
+            score -= 0.60
+    return score
+
+
 def marketfiyati_search_fallback(query: str) -> tuple[list[dict], str]:
     variants = price_query_variants(query)
+    best_by_store: dict[str, tuple[float, dict, str]] = {}
+
     for variant in variants:
-        results = marketfiyati_search(variant)
-        if results:
-            return results, variant
-    return [], variants[0] if variants else query
+        for result in marketfiyati_search(variant):
+            score = _price_result_score(query, result)
+            if score < 0.30:
+                continue
+
+            store = str(result.get("store") or result.get("source") or "").strip()
+            if not store:
+                continue
+
+            current = best_by_store.get(store.lower())
+            candidate_key = (score, -float(result.get("price") or 0))
+            current_key = (
+                (current[0], -float(current[1].get("price") or 0))
+                if current
+                else None
+            )
+            if current_key is None or candidate_key > current_key:
+                best_by_store[store.lower()] = (score, result, variant)
+
+    merged = [entry[1] for entry in best_by_store.values()]
+    merged.sort(key=lambda item: float(item.get("price") or 0))
+    for index, item in enumerate(merged):
+        item["best"] = index == 0
+
+    used_query = variants[0] if variants else query
+    if best_by_store:
+        used_query = max(best_by_store.values(), key=lambda entry: entry[0])[2]
+    return merged[:8], used_query
 
 
 def market_website_url(source: str, query: str) -> str:
