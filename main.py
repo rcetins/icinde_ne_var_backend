@@ -1140,6 +1140,53 @@ def marketfiyati_search(query: str) -> list[dict]:
     return clean_results[:8]
 
 
+def price_query_variants(query: str) -> list[str]:
+    clean = clean_product_query(query)
+    clean = re.sub(r"\s+", " ", clean).strip()
+    if not clean:
+        return []
+
+    variants = [clean]
+    no_size = re.sub(
+        r"\b\d+([,.]\d+)?\s*(g|gr|gram|kg|ml|lt|l|adet)\b",
+        " ",
+        clean,
+        flags=re.IGNORECASE
+    )
+    no_size = re.sub(r"\s+", " ", no_size).strip()
+    if no_size and no_size not in variants:
+        variants.append(no_size)
+
+    words = no_size.split() if no_size else clean.split()
+    for count in (5, 4, 3, 2):
+        if len(words) >= count:
+            candidate = " ".join(words[:count]).strip()
+            if candidate and candidate not in variants:
+                variants.append(candidate)
+
+    filler = {
+        "yarim", "yarım", "yagli", "yağlı", "az", "cok", "çok",
+        "yogun", "yoğun", "kivamli", "kıvamlı", "esintisi",
+        "dogal", "doğal", "klasik", "sade", "tam", "light"
+    }
+    core_words = [word for word in words if word.lower() not in filler]
+    if len(core_words) >= 2:
+        candidate = " ".join(core_words[:4]).strip()
+        if candidate and candidate not in variants:
+            variants.append(candidate)
+
+    return variants[:7]
+
+
+def marketfiyati_search_fallback(query: str) -> tuple[list[dict], str]:
+    variants = price_query_variants(query)
+    for variant in variants:
+        results = marketfiyati_search(variant)
+        if results:
+            return results, variant
+    return [], variants[0] if variants else query
+
+
 def market_website_url(source: str, query: str) -> str:
     market = (source or "").lower().strip()
     q = urllib.parse.quote(query or "")
@@ -1257,9 +1304,9 @@ async def analyze_price(data: PriceRequest):
         }
 
     try:
-        results = marketfiyati_search(query)
+        results, used_query = marketfiyati_search_fallback(query)
         output = build_price_message(product_name, query, results)
-        output["query"] = query
+        output["query"] = used_query
         output["confidence"] = detected.get("confidence", "medium")
         return output
 
