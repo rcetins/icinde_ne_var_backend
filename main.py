@@ -1628,6 +1628,7 @@ def normalize_nutrition_payload(parsed: dict) -> dict:
 
     return {
         "title": title,
+        "product_name": product_name or "Gıda analizi",
         "message": message,
         "risk": risk,
         "score": score,
