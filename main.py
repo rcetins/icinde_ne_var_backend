@@ -594,6 +594,12 @@ TERM_INFO = {
         "purpose": "Yağ ve kirin yüzeyden ayrılmasına yardımcı olur.",
         "effect": "Ürün yoğunluğuna göre cilt ve göz tahrişine neden olabilir; doğrudan temastan kaçınılmalıdır."
     },
+    "noniyonik aktif madde": {
+        "risk": "medium",
+        "name": "Noniyonik yüzey aktif madde",
+        "purpose": "Yağ ve kirin yüzeyden ayrılmasına yardımcı olur.",
+        "effect": "Ürün yoğunluğuna göre cilt ve göz tahrişine neden olabilir; doğrudan temastan kaçınılmalıdır."
+    },
     "anyonik yüzey aktif madde": {
         "risk": "medium",
         "name": "Anyonik yüzey aktif madde",
@@ -850,6 +856,8 @@ def is_instruction_or_warning_text(value: str) -> bool:
     }))
     if not lower:
         return True
+    if lower in {"yuz", "goz", "cilt", "eller", "el"}:
+        return True
 
     instruction_phrases = [
         "kisinin bilinci", "bilinci acik", "ilk yardim",
@@ -857,7 +865,10 @@ def is_instruction_or_warning_text(value: str) -> bool:
         "zehir danisma", "iyice karistir", "kullanmadan once",
         "kullanim talimat", "durulayin", "cocuklarin ulasamayacagi",
         "eldiven kullan", "yutulmasi halinde", "paslanmaz celik",
-        "uygun degildir", "sadece kullanim",
+        "uygun degildir", "sadece kullanim", "gida maddelerinden uzakta",
+        "gida madde", "kullanma", "takili ve", "yapmasi kolaysa",
+        "ciddi goz hasarina", "ciddi goz tahrisine", "kontakt lens",
+        "koruyucu eldiven", "koruyucu gozluk", "solunmasi halinde",
     ]
     if any(phrase in lower for phrase in instruction_phrases):
         return True
