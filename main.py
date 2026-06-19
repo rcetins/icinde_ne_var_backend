@@ -1,4 +1,9 @@
-from fastapi import FastAPI
+from collections import defaultdict, deque
+from time import monotonic
+
+import firebase_admin
+from firebase_admin import auth as firebase_auth
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -13,6 +18,46 @@ load_dotenv()
 app = FastAPI()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+firebase_admin.initialize_app(
+    options={
+        "projectId": os.getenv("FIREBASE_PROJECT_ID", "icinde-ne-var-af6cd")
+    }
+)
+
+REQUEST_LIMIT = int(os.getenv("REQUEST_LIMIT_PER_MINUTE", "20"))
+request_windows: dict[str, deque[float]] = defaultdict(deque)
+
+
+async def require_firebase_user(
+    authorization: str | None = Header(default=None),
+) -> dict:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Kimlik doğrulama gerekli.")
+
+    token = authorization.removeprefix("Bearer ").strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Kimlik doğrulama gerekli.")
+
+    try:
+        decoded = firebase_auth.verify_id_token(token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Geçersiz oturum.") from None
+
+    uid = str(decoded.get("uid") or decoded.get("sub") or "")
+    if not uid:
+        raise HTTPException(status_code=401, detail="Geçersiz kullanıcı.")
+
+    now = monotonic()
+    window = request_windows[uid]
+    while window and now - window[0] >= 60:
+        window.popleft()
+    if len(window) >= REQUEST_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail="Çok fazla istek gönderildi. Lütfen biraz bekleyin.",
+        )
+    window.append(now)
+    return decoded
 
 
 class ContentRequest(BaseModel):
@@ -965,7 +1010,10 @@ def localized_analysis_unavailable(language_code: str, read_text: str = "") -> d
 
 
 @app.post("/analyze-content")
-async def analyze_content(data: ContentRequest):
+async def analyze_content(
+    data: ContentRequest,
+    _user: dict = Depends(require_firebase_user),
+):
     raw_text = normalize_text(data.text)
     content_text = extract_relevant_content(raw_text)
     quality = ocr_quality(content_text)
@@ -1520,7 +1568,10 @@ def build_price_message(product_name: str, query: str, results: list[dict]) -> d
 
 
 @app.post("/analyze-price")
-async def analyze_price(data: PriceRequest):
+async def analyze_price(
+    data: PriceRequest,
+    _user: dict = Depends(require_firebase_user),
+):
     detected = await detect_product_for_price(data)
     query = detected.get("query", "").strip()
     product_name = detected.get("product_name", query)
@@ -1647,7 +1698,10 @@ def normalize_nutrition_payload(parsed: dict) -> dict:
 
 
 @app.post("/analyze-nutrition")
-async def analyze_nutrition(data: NutritionRequest):
+async def analyze_nutrition(
+    data: NutritionRequest,
+    _user: dict = Depends(require_firebase_user),
+):
     try:
         response = client.chat.completions.create(
             model="gpt-4.1-mini",
