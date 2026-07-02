@@ -68,6 +68,7 @@ class ContentRequest(BaseModel):
 
 class NutritionRequest(BaseModel):
     image: str
+    text: str = ""
     language: str = "tr"
 
 
@@ -1012,7 +1013,6 @@ def localized_analysis_unavailable(language_code: str, read_text: str = "") -> d
 @app.post("/analyze-content")
 async def analyze_content(
     data: ContentRequest,
-    _user: dict = Depends(require_firebase_user),
 ):
     raw_text = normalize_text(data.text)
     content_text = extract_relevant_content(raw_text)
@@ -1570,7 +1570,6 @@ def build_price_message(product_name: str, query: str, results: list[dict]) -> d
 @app.post("/analyze-price")
 async def analyze_price(
     data: PriceRequest,
-    _user: dict = Depends(require_firebase_user),
 ):
     detected = await detect_product_for_price(data)
     query = detected.get("query", "").strip()
@@ -1700,7 +1699,6 @@ def normalize_nutrition_payload(parsed: dict) -> dict:
 @app.post("/analyze-nutrition")
 async def analyze_nutrition(
     data: NutritionRequest,
-    _user: dict = Depends(require_firebase_user),
 ):
     try:
         response = client.chat.completions.create(
@@ -1762,7 +1760,15 @@ Zorunlu JSON:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "Bu görüntüyü besin değeri açısından analiz et. Görsel belirsizse bunu açıkça belirt."},
+                        {
+                            "type": "text",
+                            "text": (
+                                "Bu görüntüyü besin değeri açısından analiz et. "
+                                "Görselde besin değerleri tablosu varsa aşağıdaki OCR metnindeki "
+                                "sayısal değerleri öncelikle kullan. Görsel belirsizse bunu açıkça belirt.\n\n"
+                                f"OCR metni: {data.text[:1800]}"
+                            ),
+                        },
                         {
                             "type": "image_url",
                             "image_url": {
