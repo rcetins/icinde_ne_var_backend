@@ -243,7 +243,7 @@ def extract_relevant_content(text: str) -> str:
     if stop_index != -1:
         extracted = extracted[:stop_index]
 
-    return extracted[:1800].strip()
+    return extracted[:12000].strip()
 
 
 def ocr_quality(text: str) -> dict:
@@ -925,7 +925,7 @@ def risk_title(risk: str) -> str:
     return "🟡 Dikkat Gerektirir"
 
 
-def neutral_ingredient_names(text: str, limit: int = 12) -> list[str]:
+def neutral_ingredient_names(text: str) -> list[str]:
     clean = normalize_text(text)
     clean = re.sub(
         r"^\s*(içindekiler|icindekiler|ingredients?|contents|bileşenler|bilesenler|zutaten|ingrédients)\s*:?\s*",
@@ -953,8 +953,6 @@ def neutral_ingredient_names(text: str, limit: int = 12) -> list[str]:
             continue
         seen.add(lower)
         result.append(name)
-        if len(result) >= limit:
-            break
     return result
 
 
@@ -989,7 +987,7 @@ def local_content_analysis(text: str, quality: dict) -> dict:
 
     if found:
         highest = max([item["risk"] for item in found], key=risk_rank)
-        shown = found[:24]
+        shown = found
         categories = categorized_content_items(shown, text)
 
         details = []
@@ -1129,7 +1127,7 @@ def merge_detected_items(ai_items, *texts: str) -> list[dict]:
         })
         seen.add(key)
 
-    return merged[:30]
+    return merged
 
 
 def highest_risk_from_items(items: list[dict], fallback_risk: str) -> str:
@@ -1279,7 +1277,7 @@ JSON:
                 }
             ],
             temperature=0,
-            max_tokens=1100
+            max_tokens=2400
         )
 
         result_text = response.choices[0].message.content.strip()
