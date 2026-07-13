@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from time import monotonic
 
 import firebase_admin
-from firebase_admin import auth as firebase_auth, firestore
+from firebase_admin import auth as firebase_auth, credentials, firestore
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -19,11 +19,38 @@ load_dotenv()
 app = FastAPI()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-firebase_admin.initialize_app(
-    options={
-        "projectId": os.getenv("FIREBASE_PROJECT_ID", "icinde-ne-var-af6cd")
-    }
-)
+
+
+def initialize_firebase_admin():
+    project_id = os.getenv("FIREBASE_PROJECT_ID", "icinde-ne-var-af6cd")
+    raw_service_account = (
+        os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+        or os.getenv("FIREBASE_CREDENTIALS_JSON")
+    )
+
+    if raw_service_account:
+        try:
+            service_account = json.loads(raw_service_account)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "FIREBASE_SERVICE_ACCOUNT_JSON geçerli bir JSON değil."
+            ) from exc
+
+        private_key = str(service_account.get("private_key") or "")
+        if private_key:
+            service_account["private_key"] = private_key.replace("\\n", "\n")
+        credential = credentials.Certificate(service_account)
+        return firebase_admin.initialize_app(
+            credential,
+            options={"projectId": project_id},
+        )
+
+    # Google Cloud gibi ADC sağlayan ortamlarda veya Render Secret File ile
+    # GOOGLE_APPLICATION_CREDENTIALS ayarlandığında bu yol kullanılır.
+    return firebase_admin.initialize_app(options={"projectId": project_id})
+
+
+initialize_firebase_admin()
 
 REQUEST_LIMIT = int(os.getenv("REQUEST_LIMIT_PER_MINUTE", "20"))
 DAILY_ANALYSIS_LIMIT = int(os.getenv("DAILY_ANALYSIS_LIMIT", "5"))
