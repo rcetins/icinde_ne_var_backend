@@ -1,8 +1,9 @@
 from collections import defaultdict, deque
+from datetime import datetime, timezone
 from time import monotonic
 
 import firebase_admin
-from firebase_admin import auth as firebase_auth
+from firebase_admin import auth as firebase_auth, firestore
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -25,7 +26,69 @@ firebase_admin.initialize_app(
 )
 
 REQUEST_LIMIT = int(os.getenv("REQUEST_LIMIT_PER_MINUTE", "20"))
+DAILY_ANALYSIS_LIMIT = int(os.getenv("DAILY_ANALYSIS_LIMIT", "5"))
 request_windows: dict[str, deque[float]] = defaultdict(deque)
+firestore_client = firestore.client()
+
+
+def reserve_analysis_right(uid: str, mode: str) -> dict:
+    """Atomically reserve one analysis right on the server."""
+    user_ref = firestore_client.collection("users").document(uid)
+    usage_ref = firestore_client.collection("usage").document(uid)
+    transaction = firestore_client.transaction()
+
+    @firestore.transactional
+    def reserve(txn):
+        user_data = user_ref.get(transaction=txn).to_dict() or {}
+        expires_at = user_data.get("premiumExpiresAt")
+        premium_not_expired = (
+            isinstance(expires_at, datetime)
+            and expires_at > datetime.now(timezone.utc)
+        )
+        if user_data.get("isPremium") is True and premium_not_expired:
+            return {"isPremium": True, "mode": mode}
+        if user_data.get("isPremium") is True and not premium_not_expired:
+            txn.set(user_ref, {
+                "isPremium": False,
+                "subscriptionState": "EXPIRED_LOCAL_CHECK",
+                "updatedAt": firestore.SERVER_TIMESTAMP,
+            }, merge=True)
+
+        snap = usage_ref.get(transaction=txn)
+        data = snap.to_dict() or {}
+        now_ms = int(__import__("time").time() * 1000)
+        reset_at = int(data.get("resetAtMillis") or 0)
+        if reset_at <= now_ms:
+            data = {
+                "contentUsed": 0,
+                "nutritionUsed": 0,
+                "priceUsed": 0,
+                "rewardCredits": int(data.get("rewardCredits") or 0),
+                "resetAtMillis": now_ms + 24 * 60 * 60 * 1000,
+            }
+
+        field = f"{mode}Used"
+        used = int(data.get(field) or 0)
+        credits = max(0, int(data.get("rewardCredits") or 0))
+        if used >= DAILY_ANALYSIS_LIMIT:
+            if credits <= 0:
+                raise HTTPException(
+                    status_code=429,
+                    detail="Günlük analiz hakkınız doldu.",
+                )
+            data["rewardCredits"] = credits - 1
+
+        data[field] = used + 1
+        data.update({
+            "uid": uid,
+            "updatedAt": firestore.SERVER_TIMESTAMP,
+        })
+        if not snap.exists:
+            data["createdAt"] = firestore.SERVER_TIMESTAMP
+        txn.set(usage_ref, data, merge=True)
+        return {"isPremium": False, "mode": mode, **data}
+
+    return reserve(transaction)
 
 
 async def require_firebase_user(
@@ -60,6 +123,27 @@ async def require_firebase_user(
     return decoded
 
 
+async def require_content_right(
+    user: dict = Depends(require_firebase_user),
+) -> dict:
+    reserve_analysis_right(str(user.get("uid") or user.get("sub")), "content")
+    return user
+
+
+async def require_nutrition_right(
+    user: dict = Depends(require_firebase_user),
+) -> dict:
+    reserve_analysis_right(str(user.get("uid") or user.get("sub")), "nutrition")
+    return user
+
+
+async def require_price_right(
+    user: dict = Depends(require_firebase_user),
+) -> dict:
+    reserve_analysis_right(str(user.get("uid") or user.get("sub")), "price")
+    return user
+
+
 class ContentRequest(BaseModel):
     text: str = ""
     image: str | None = None
@@ -68,7 +152,6 @@ class ContentRequest(BaseModel):
 
 class NutritionRequest(BaseModel):
     image: str
-    text: str = ""
     language: str = "tr"
 
 
@@ -815,6 +898,53 @@ def risk_title(risk: str) -> str:
     return "🟡 Dikkat Gerektirir"
 
 
+def neutral_ingredient_names(text: str, limit: int = 12) -> list[str]:
+    clean = normalize_text(text)
+    clean = re.sub(
+        r"^\s*(içindekiler|icindekiler|ingredients?|contents|bileşenler|bilesenler|zutaten|ingrédients)\s*:?\s*",
+        "",
+        clean,
+        flags=re.IGNORECASE,
+    )
+    candidates = re.split(r"[,;•\n]", clean)
+    risky_patterns = [
+        re.compile(r"(?<![\w])" + re.escape(key.lower()) + r"(?![\w])")
+        for key in TERM_INFO
+    ]
+    result = []
+    seen = set()
+    for candidate in candidates:
+        name = normalize_text(candidate).strip(" .:-")
+        lower = name.lower()
+        if len(name) < 2 or len(name) > 70:
+            continue
+        if re.search(r"\d{2,}", name):
+            continue
+        if any(pattern.search(lower) for pattern in risky_patterns):
+            continue
+        if lower in seen:
+            continue
+        seen.add(lower)
+        result.append(name)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def categorized_content_items(found: list[dict], text: str) -> dict:
+    return {
+        "good_items": neutral_ingredient_names(text),
+        "warning_items": [
+            item["name"] for item in found
+            if normalize_risk(item.get("risk")) == "medium"
+        ],
+        "avoid_items": [
+            item["name"] for item in found
+            if normalize_risk(item.get("risk")) == "high"
+        ],
+    }
+
+
 def local_content_analysis(text: str, quality: dict) -> dict:
     found = find_terms(text)
 
@@ -833,6 +963,7 @@ def local_content_analysis(text: str, quality: dict) -> dict:
     if found:
         highest = max([item["risk"] for item in found], key=risk_rank)
         shown = found[:24]
+        categories = categorized_content_items(shown, text)
 
         details = []
         for item in shown[:6]:
@@ -856,7 +987,8 @@ def local_content_analysis(text: str, quality: dict) -> dict:
             "message": "\n\n".join(details + [general, "Nihai karar kullanıcıya aittir."]),
             "risk": highest,
             "read_text": text,
-            "detected_items": shown
+            "detected_items": shown,
+            **categories,
         }
 
     if not quality["can_be_low"]:
@@ -879,7 +1011,10 @@ def local_content_analysis(text: str, quality: dict) -> dict:
         ),
         "risk": "low",
         "read_text": text,
-        "detected_items": []
+        "detected_items": [],
+        "good_items": neutral_ingredient_names(text),
+        "warning_items": [],
+        "avoid_items": [],
     }
 
 
@@ -1013,6 +1148,7 @@ def localized_analysis_unavailable(language_code: str, read_text: str = "") -> d
 @app.post("/analyze-content")
 async def analyze_content(
     data: ContentRequest,
+    _user: dict = Depends(require_content_right),
 ):
     raw_text = normalize_text(data.text)
     content_text = extract_relevant_content(raw_text)
@@ -1022,6 +1158,7 @@ async def analyze_content(
     response_language = response_language_name(data.language)
 
     fallback = local_content_analysis(content_text, quality)
+    fallback["analysis_source"] = "local"
 
     # Görsel yoksa ve OCR okunamadıysa risk rengi üretmek yerine unknown döndür.
     if requested_language == "tr" and fallback["risk"] == "unknown" and not has_image:
@@ -1031,7 +1168,7 @@ async def analyze_content(
         requested_language == "tr"
         and fallback.get("risk") != "unknown"
         and quality.get("can_be_low")
-        and len(fallback.get("detected_items", [])) >= 5
+        and len(fallback.get("detected_items", [])) >= 3
     ):
         return fallback
 
@@ -1166,14 +1303,12 @@ JSON:
             "message": ai_result.get("message") or fallback["message"],
             "risk": final_risk,
             "read_text": read_text,
-            "detected_items": detected_items
+            "detected_items": detected_items,
+            "analysis_source": "ai"
         }
 
-    except Exception as e:
-        return {
-            **fallback,
-            "debug": str(e)
-        }
+    except Exception:
+        return fallback
 
 
 
@@ -1518,21 +1653,16 @@ def build_price_message(product_name: str, query: str, results: list[dict]) -> d
     saving_amount = max(0.0, average - lowest["price"])
     saving_percent = (saving_amount / average * 100) if average > 0 else 0.0
 
-    if lowest["price"] <= average * 0.90:
+    if saving_percent >= 10:
         risk = "low"
         price_status = "good"
         title = "🟢 Uygun Fiyat"
         comment = "Bulunan en düşük fiyat piyasa ortalamasının altında görünüyor."
-    elif lowest["price"] <= average * 1.05:
+    else:
         risk = "medium"
         price_status = "normal"
-        title = "🟡 Ortalama Fiyat"
-        comment = "Bulunan fiyatlar piyasa ortalamasına yakın görünüyor."
-    else:
-        risk = "high"
-        price_status = "expensive"
-        title = "🔴 Yüksek Fiyat"
-        comment = "Bulunan fiyatlar ortalamanın üzerinde görünüyor."
+        title = "🟡 Benzer Fiyatlar"
+        comment = "Bulunan mağaza fiyatları birbirine yakın görünüyor."
 
     lines = [
         f"Ürün: {product_name or query}",
@@ -1570,6 +1700,7 @@ def build_price_message(product_name: str, query: str, results: list[dict]) -> d
 @app.post("/analyze-price")
 async def analyze_price(
     data: PriceRequest,
+    _user: dict = Depends(require_price_right),
 ):
     detected = await detect_product_for_price(data)
     query = detected.get("query", "").strip()
@@ -1594,7 +1725,7 @@ async def analyze_price(
         output["confidence"] = detected.get("confidence", "medium")
         return output
 
-    except Exception as e:
+    except Exception:
         return {
             "title": "💰 Fiyat Analizi Tamamlanamadı",
             "message": (
@@ -1603,7 +1734,6 @@ async def analyze_price(
             ),
             "risk": "unknown",
             "query": query,
-            "debug": str(e),
             "prices": []
         }
 
@@ -1699,6 +1829,7 @@ def normalize_nutrition_payload(parsed: dict) -> dict:
 @app.post("/analyze-nutrition")
 async def analyze_nutrition(
     data: NutritionRequest,
+    _user: dict = Depends(require_nutrition_right),
 ):
     try:
         response = client.chat.completions.create(
@@ -1760,15 +1891,7 @@ Zorunlu JSON:
                 {
                     "role": "user",
                     "content": [
-                        {
-                            "type": "text",
-                            "text": (
-                                "Bu görüntüyü besin değeri açısından analiz et. "
-                                "Görselde besin değerleri tablosu varsa aşağıdaki OCR metnindeki "
-                                "sayısal değerleri öncelikle kullan. Görsel belirsizse bunu açıkça belirt.\n\n"
-                                f"OCR metni: {data.text[:1800]}"
-                            ),
-                        },
+                        {"type": "text", "text": "Bu görüntüyü besin değeri açısından analiz et. Görsel belirsizse bunu açıkça belirt."},
                         {
                             "type": "image_url",
                             "image_url": {
@@ -1797,12 +1920,12 @@ Zorunlu JSON:
 
         return normalize_nutrition_payload(parsed)
 
-    except Exception as e:
+    except Exception:
         return normalize_nutrition_payload({
             "title": "🟡 Besin Analizi Tamamlanamadı",
-            "message": f"Besin analizi şu anda tamamlanamadı. Hata: {str(e)}",
-            "risk": "medium",
-            "score": 50,
+            "message": "Besin analizi şu anda tamamlanamadı. Lütfen biraz sonra tekrar deneyin.",
+            "risk": "unknown",
+            "score": 0,
             "nutrition": {},
             "alerts": ["Bağlantı veya analiz sırasında sorun oluştu."]
         })
