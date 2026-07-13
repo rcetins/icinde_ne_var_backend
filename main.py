@@ -1,25 +1,49 @@
-from collections import defaultdict, deque
-from datetime import datetime, timezone
-from time import monotonic
+"""İçinde Ne Var backend uygulaması.
 
-import firebase_admin
-from firebase_admin import auth as firebase_auth, credentials, firestore
-from fastapi import Depends, FastAPI, Header, HTTPException
-from pydantic import BaseModel
+Sistem/Firebase/AI akışları ve API endpointleri bu dosyada; ürün güvenlik
+verileri alan bazlı katalog dosyalarında tutulur.
+"""
+
 from dotenv import load_dotenv
-from openai import OpenAI
-import os
-import json
-import re
-import urllib.parse
-import urllib.request
+from fastapi import FastAPI
 
 load_dotenv()
 
-app = FastAPI()
+
+import os
+
+from openai import OpenAI
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+from pydantic import BaseModel
+
+class ContentRequest(BaseModel):
+    text: str = ""
+    image: str | None = None
+    language: str = "tr"
+
+
+class NutritionRequest(BaseModel):
+    image: str
+    language: str = "tr"
+
+
+
+class PriceRequest(BaseModel):
+    image: str | None = None
+    text: str = ""
+    language: str = "tr"
+
+from collections import defaultdict, deque
+from datetime import datetime, timezone
+from time import monotonic
+import json
+import os
+
+import firebase_admin
+from firebase_admin import auth as firebase_auth, credentials, firestore
+from fastapi import Depends, Header, HTTPException
 
 def initialize_firebase_admin():
     project_id = os.getenv("FIREBASE_PROJECT_ID", "icinde-ne-var-af6cd")
@@ -170,28 +194,17 @@ async def require_price_right(
     reserve_analysis_right(str(user.get("uid") or user.get("sub")), "price")
     return user
 
+app = FastAPI(title="İçinde Ne Var API")
 
-class ContentRequest(BaseModel):
-    text: str = ""
-    image: str | None = None
-    language: str = "tr"
+import json
+import os
+import re
+from time import monotonic
 
+from fastapi import APIRouter, Depends
 
-class NutritionRequest(BaseModel):
-    image: str
-    language: str = "tr"
-
-
-
-class PriceRequest(BaseModel):
-    image: str | None = None
-    text: str = ""
-    language: str = "tr"
-
-
-@app.get("/")
-def root():
-    return {"message": "İçinde Ne Var Backend Çalışıyor"}
+from food_safety_catalog import normalized_food_risk, unknown_e_codes
+from safety_catalog_registry import SAFETY_ALIASES, SAFETY_ITEMS
 
 
 def normalize_text(text: str) -> str:
@@ -287,571 +300,12 @@ def ocr_quality(text: str) -> dict:
 
 # Uygulamanın hızlı/yedek karar motoru.
 # Amaç: AI hata verse bile her şeyi yeşile düşürmemek.
-TERM_INFO = {
-    "aspartam": {
-        "risk": "high",
-        "name": "Aspartam",
-        "purpose": "Şekersiz veya düşük kalorili ürünlerde tatlandırıcı olarak kullanılır.",
-        "effect": "Hassas kişilerde dikkat gerektirebilir. Fenilketonüri hastaları için uygun değildir; sık tüketimde toplam tatlandırıcı alımı değerlendirilmelidir."
-    },
-    "acesulfam": {
-        "risk": "high",
-        "name": "Acesulfam K",
-        "purpose": "Kalorisiz tatlandırıcı olarak kullanılır.",
-        "effect": "Tek başına kesin zarar hükmü verilemez; fakat sık tüketilen diyet ürünlerde toplam yapay tatlandırıcı yükü açısından dikkat gerektirir."
-    },
-    "acesulfame potassium": {
-        "risk": "high",
-        "name": "Acesulfame Potassium / Acesulfam K",
-        "purpose": "Kalorisiz yapay tatlandırıcı olarak kullanılır.",
-        "effect": "Sık tüketilen diyet ürünlerde toplam yapay tatlandırıcı alımı açısından dikkat gerektirir."
-    },
-    "acesulfame k": {
-        "risk": "high",
-        "name": "Acesulfame K / Acesulfam K",
-        "purpose": "Kalorisiz yapay tatlandırıcı olarak kullanılır.",
-        "effect": "Toplam yapay tatlandırıcı yükü açısından dikkatle değerlendirilmelidir."
-    },
-    "aspartame": {
-        "risk": "high",
-        "name": "Aspartame / Aspartam",
-        "purpose": "Şekersiz veya düşük kalorili ürünlerde tatlandırıcı olarak kullanılır.",
-        "effect": "Fenilketonüri hastaları için uygun değildir; hassas kişilerde ve sık tüketimde dikkat gerektirir."
-    },
-    "sodyum nitrit": {
-        "risk": "high",
-        "name": "Sodyum nitrit / Nitrit",
-        "purpose": "İşlenmiş et ürünlerinde renk koruma ve mikrobiyal dayanıklılık için kullanılır.",
-        "effect": "İşlenmiş et ürünleriyle birlikte değerlendirildiğinde sık tüketimde dikkat edilmesi gereken katkılardandır."
-    },
-    "nitrit": {
-        "risk": "high",
-        "name": "Nitrit",
-        "purpose": "Özellikle işlenmiş etlerde koruyucu ve renk sabitleyici olarak kullanılır.",
-        "effect": "Sık tüketimde dikkat gerektirir; ürün türü ve tüketim sıklığı önemlidir."
-    },
-    "e250": {
-        "risk": "high",
-        "name": "E250 - Sodyum nitrit",
-        "purpose": "İşlenmiş etlerde koruyucu ve renk sabitleyici olarak kullanılır.",
-        "effect": "İşlenmiş et tüketimi bağlamında dikkat edilmesi gereken katkılardandır."
-    },
-    "e621": {
-        "risk": "high",
-        "name": "E621 / MSG",
-        "purpose": "Lezzet artırıcı olarak kullanılır.",
-        "effect": "Bazı hassas kişilerde baş ağrısı, rahatsızlık veya hassasiyet bildirimleri olabilir; sık tüketimde dikkat önerilir."
-    },
-    "monosodyum glutamat": {
-        "risk": "high",
-        "name": "Monosodyum glutamat",
-        "purpose": "Lezzet artırıcı olarak kullanılır.",
-        "effect": "Hassas kişilerde rahatsızlık yapabilir; özellikle yoğun işlenmiş gıdalarda dikkat gerektirir."
-    },
-    "glikoz şurubu": {
-        "risk": "high",
-        "name": "Glikoz şurubu",
-        "purpose": "Tatlandırma, kıvam ve raf ömrü için kullanılır.",
-        "effect": "Şeker yükünü artırabilir; sık tüketimde kan şekeri ve kalori alımı açısından dikkat gerektirir."
-    },
-    "fruktoz şurubu": {
-        "risk": "high",
-        "name": "Fruktoz şurubu",
-        "purpose": "Tatlandırıcı şurup olarak kullanılır.",
-        "effect": "Sık tüketimde yüksek şeker alımına katkı sağlayabilir; özellikle içecek ve atıştırmalıklarda dikkat gerektirir."
-    },
-    "high fructose corn syrup": {
-        "risk": "high",
-        "name": "High Fructose Corn Syrup",
-        "purpose": "Tatlandırıcı şurup olarak kullanılır.",
-        "effect": "Sık tüketimde şeker ve kalori yükünü artırabilir; özellikle içecek ve tatlı ürünlerde dikkat gerektirir."
-    },
-    "mısır şurubu": {
-        "risk": "high",
-        "name": "Mısır şurubu",
-        "purpose": "Tatlandırma ve kıvam için kullanılır.",
-        "effect": "Şeker ve kalori yükünü artırabilir; sık tüketimde dikkat gerektirir."
-    },
-    "corn syrup": {
-        "risk": "high",
-        "name": "Corn Syrup / Mısır şurubu",
-        "purpose": "Tatlandırma ve kıvam için kullanılır.",
-        "effect": "Şeker ve kalori yükünü artırabilir; sık tüketimde dikkat gerektirir."
-    },
-    "hidrojene": {
-        "risk": "high",
-        "name": "Hidrojene yağ",
-        "purpose": "Ürünün kıvamını ve raf dayanımını artırmak için kullanılır.",
-        "effect": "Doymuş/trans yağ içeriği açısından dikkat gerektirebilir; sık tüketimde kalp-damar sağlığı bakımından değerlendirilmelidir."
-    },
-    "trans yağ": {
-        "risk": "high",
-        "name": "Trans yağ",
-        "purpose": "Bazı işlenmiş yağ yapılarında bulunabilir.",
-        "effect": "Sağlık açısından en çok dikkat edilmesi gereken yağ türlerinden biridir; mümkünse düşük tutulması önerilir."
-    },
-    "titanyum dioksit": {
-        "risk": "high",
-        "name": "Titanyum dioksit",
-        "purpose": "Beyazlatıcı/renk düzenleyici olarak kullanılmıştır.",
-        "effect": "Gıda kullanımında bazı bölgelerde tartışmalı kabul edilir; içerikte görülürse dikkat gerektirir."
-    },
-    "e171": {
-        "risk": "high",
-        "name": "E171 - Titanyum dioksit",
-        "purpose": "Beyazlatıcı/renk düzenleyici katkı olarak kullanılır.",
-        "effect": "Gıda kullanımındaki güvenlik tartışmaları nedeniyle dikkat gerektirir."
-    },
-    "formaldehit": {
-        "risk": "high",
-        "name": "Formaldehit / formaldehit salıcılar",
-        "purpose": "Bazı ürünlerde koruyucu sistemlerle ilişkilidir.",
-        "effect": "Cilt hassasiyeti ve alerjik reaksiyon riski açısından dikkat gerektirir."
-    },
-    "triclosan": {
-        "risk": "high",
-        "name": "Triclosan",
-        "purpose": "Antibakteriyel etki için kullanılmıştır.",
-        "effect": "Güvenlik ve çevresel etkiler açısından tartışmalı içeriklerdendir; kozmetikte dikkat gerektirir."
-    },
-    "hydroquinone": {
-        "risk": "high",
-        "name": "Hydroquinone / Hidrokinon",
-        "purpose": "Cilt tonu açıcı ürünlerle ilişkilidir.",
-        "effect": "Ciltte tahriş ve hassasiyet riski nedeniyle uzman kontrolü gerektirebilecek güçlü içeriklerdendir."
-    },
-    "methylisothiazolinone": {
-        "risk": "high",
-        "name": "Methylisothiazolinone",
-        "purpose": "Kozmetiklerde koruyucu olarak kullanılır.",
-        "effect": "Alerjik temas dermatiti ve cilt hassasiyeti açısından dikkat gerektiren koruyuculardandır."
-    },
-    "şeker": {
-        "risk": "medium",
-        "name": "Şeker",
-        "purpose": "Tat vermek ve ürünün lezzet profilini artırmak için kullanılır.",
-        "effect": "Sık tüketimde kalori ve kan şekeri yükünü artırabilir."
-    },
-    "sugar": {
-        "risk": "medium",
-        "name": "Sugar / Şeker",
-        "purpose": "Tatlandırıcı olarak kullanılır.",
-        "effect": "Sık tüketimde toplam şeker alımını artırabilir."
-    },
-    "fructose": {
-        "risk": "medium",
-        "name": "Fructose / Fruktoz",
-        "purpose": "Tatlandırıcı olarak kullanılır.",
-        "effect": "Sık tüketimde toplam şeker yüküne katkı sağlayabilir."
-    },
-    "sucralose": {
-        "risk": "medium",
-        "name": "Sucralose / Sukraloz",
-        "purpose": "Kalorisiz yapay tatlandırıcı olarak kullanılır.",
-        "effect": "Genel limitler içinde kullanılır; sık tüketimde toplam yapay tatlandırıcı alımı açısından dikkat edilebilir."
-    },
-    "potassium sorbate": {
-        "risk": "medium",
-        "name": "Potassium Sorbate / Potasyum sorbat",
-        "purpose": "Küf ve maya gelişimini azaltmak için koruyucu olarak kullanılır.",
-        "effect": "Genelde düşük miktarda kullanılır; hassas kişilerde dikkat gerektirebilir."
-    },
-    "potasyum sorbat": {
-        "risk": "medium",
-        "name": "Potasyum sorbat",
-        "purpose": "Küf ve maya gelişimini azaltmak için koruyucu olarak kullanılır.",
-        "effect": "Genelde düşük miktarda kullanılır; hassas kişilerde dikkat gerektirebilir."
-    },
-    "sorbic acid": {
-        "risk": "medium",
-        "name": "Sorbic Acid / Sorbik asit",
-        "purpose": "Koruyucu olarak kullanılır.",
-        "effect": "Hassas kişilerde dikkat gerektirebilir."
-    },
-    "sorbik asit": {
-        "risk": "medium",
-        "name": "Sorbik asit",
-        "purpose": "Koruyucu olarak kullanılır.",
-        "effect": "Hassas kişilerde dikkat gerektirebilir."
-    },
-    "modified food starch": {
-        "risk": "medium",
-        "name": "Modified Food Starch",
-        "purpose": "Kıvam ve yapı düzenleyici olarak kullanılır.",
-        "effect": "Genelde teknolojik katkıdır; yoğun işlenmiş ürünlerde içerik kalitesi açısından dikkat edilebilir."
-    },
-    "modified corn starch": {
-        "risk": "medium",
-        "name": "Modified Corn Starch",
-        "purpose": "Kıvam ve yapı düzenleyici olarak kullanılır.",
-        "effect": "Genelde teknolojik katkıdır; yoğun işlenmiş ürünlerde dikkat edilebilir."
-    },
-    "natural flavor": {
-        "risk": "medium",
-        "name": "Natural Flavor / Doğal aroma",
-        "purpose": "Ürüne tat ve koku profili vermek için kullanılır.",
-        "effect": "Genelde düşük miktarda kullanılır; içerik şeffaflığı açısından dikkat edilebilir."
-    },
-    "natural flavors": {
-        "risk": "medium",
-        "name": "Natural Flavor / Doğal aroma",
-        "purpose": "Ürüne tat ve koku profili vermek için kullanılır.",
-        "effect": "Genelde düşük miktarda kullanılır; içerik şeffaflığı açısından dikkat edilebilir."
-    },
-    "sodium citrate": {
-        "risk": "medium",
-        "name": "Sodium Citrate / Sodyum sitrat",
-        "purpose": "Asitlik düzenleyici ve stabilizatör olarak kullanılır.",
-        "effect": "Genelde teknolojik katkıdır; sodyum içeriği ve ürünün genel işlenmişliği ile birlikte değerlendirilir."
-    },
-    "malic acid": {
-        "risk": "medium",
-        "name": "Malic Acid / Malik asit",
-        "purpose": "Asitlik düzenleyici olarak kullanılır.",
-        "effect": "Genelde düşük miktarda kullanılır; hassas kişilerde dikkat edilebilir."
-    },
-    "non fat milk": {
-        "risk": "low",
-        "name": "Non fat milk / Yağsız süt",
-        "purpose": "Süt bazlı ana bileşen olarak kullanılır.",
-        "effect": "Süt alerjisi veya laktoz hassasiyeti olan kişiler için dikkat edilmelidir."
-    },
-    "milk": {
-        "risk": "low",
-        "name": "Milk / Süt",
-        "purpose": "Süt bazlı ana bileşen olarak kullanılır.",
-        "effect": "Süt alerjisi veya laktoz hassasiyeti olan kişiler için dikkat edilmelidir."
-    },
-    "water": {
-        "risk": "low",
-        "name": "Water / Su",
-        "purpose": "Çözücü veya ana bileşen olarak kullanılır.",
-        "effect": "Belirgin riskli katkı değildir."
-    },
-    "strawberries": {
-        "risk": "low",
-        "name": "Strawberries / Çilek",
-        "purpose": "Meyve bileşeni olarak kullanılır.",
-        "effect": "Genel olarak olumlu/nötr içeriktir; alerjisi olan kişiler dikkat etmelidir."
-    },
-    "strawberry": {
-        "risk": "low",
-        "name": "Strawberry / Çilek",
-        "purpose": "Meyve bileşeni olarak kullanılır.",
-        "effect": "Genel olarak olumlu/nötr içeriktir; alerjisi olan kişiler dikkat etmelidir."
-    },
-    "vitamin d3": {
-        "risk": "low",
-        "name": "Vitamin D3",
-        "purpose": "Vitamin desteği için kullanılır.",
-        "effect": "Belirgin riskli katkı değildir; miktar ve ürün bağlamı önemlidir."
-    },
-    "vitamin a palmitate": {
-        "risk": "low",
-        "name": "Vitamin A Palmitate",
-        "purpose": "Vitamin A desteği için kullanılır.",
-        "effect": "Palm yağı değildir; vitamin bileşiği olarak değerlendirilir."
-    },
-    "yogurt cultures": {
-        "risk": "low",
-        "name": "Yogurt cultures / Yoğurt kültürleri",
-        "purpose": "Yoğurt kültürü olarak kullanılır.",
-        "effect": "Belirgin riskli katkı değildir."
-    },
-    "l. acidophilus": {
-        "risk": "low",
-        "name": "L. acidophilus",
-        "purpose": "Yoğurt/probiyotik kültür olarak kullanılır.",
-        "effect": "Belirgin riskli katkı değildir."
-    },
-    "palm": {
-        "risk": "medium",
-        "name": "Palm yağı",
-        "purpose": "Kıvam, yapı ve raf dayanımı için kullanılır.",
-        "effect": "Doymuş yağ alımına katkı sağlayabilir; sık tüketimde dikkat önerilir."
-    },
-    "aroma": {
-        "risk": "medium",
-        "name": "Aroma",
-        "purpose": "Ürüne belirli tat veya koku profili kazandırmak için kullanılır.",
-        "effect": "Genelde düşük miktarda kullanılır; ancak yoğun işlenmiş ürünlerde içerik kalitesini değerlendirmek için dikkat edilebilir."
-    },
-    "renklendirici": {
-        "risk": "medium",
-        "name": "Renklendirici",
-        "purpose": "Ürüne istenen rengi vermek veya rengi standartlaştırmak için kullanılır.",
-        "effect": "Bazı hassas kişilerde alerji/hassasiyet oluşturabilir; özellikle çocukların sık tükettiği ürünlerde dikkat önerilir."
-    },
-    "colorant": {
-        "risk": "medium",
-        "name": "Colorant / Renklendirici",
-        "purpose": "Ürün rengini vermek veya güçlendirmek için kullanılır.",
-        "effect": "Hassas kişilerde reaksiyon oluşturabilir; sık kullanım/tüketimde dikkat edilebilir."
-    },
-    "koruyucu": {
-        "risk": "medium",
-        "name": "Koruyucu",
-        "purpose": "Ürünün bozulmasını geciktirmek ve raf ömrünü uzatmak için kullanılır.",
-        "effect": "Her koruyucu zararlı değildir; fakat bazı türleri hassas bünyelerde reaksiyon oluşturabilir."
-    },
-    "preservative": {
-        "risk": "medium",
-        "name": "Preservative / Koruyucu",
-        "purpose": "Mikrobiyal bozulmayı azaltmak ve raf ömrünü uzatmak için kullanılır.",
-        "effect": "Hassas cilt veya hassas bünyelerde dikkat gerektirebilir."
-    },
-    "emülgatör": {
-        "risk": "medium",
-        "name": "Emülgatör",
-        "purpose": "Yağ ve su gibi karışması zor bileşenleri bir arada tutmak için kullanılır.",
-        "effect": "Genelde teknolojik katkıdır; yoğun işlenmiş ürünlerde sık tüketim açısından dikkat edilebilir."
-    },
-    "tatlandırıcı": {
-        "risk": "medium",
-        "name": "Tatlandırıcı",
-        "purpose": "Şeker yerine veya şekerle birlikte tat vermek için kullanılır.",
-        "effect": "Türüne ve kullanım sıklığına göre dikkat gerektirebilir."
-    },
-    "sls": {
-        "risk": "medium",
-        "name": "SLS",
-        "purpose": "Temizleyici ve köpürtücü olarak kullanılır.",
-        "effect": "Hassas ciltlerde kuruluk, tahriş veya hassasiyet yapabilir."
-    },
-    "sles": {
-        "risk": "medium",
-        "name": "SLES",
-        "purpose": "Temizleyici ve köpük artırıcı olarak kullanılır.",
-        "effect": "SLS'e göre daha yumuşak kabul edilse de hassas ciltlerde kuruluk ve tahriş yapabilir."
-    },
-    "paraben": {
-        "risk": "medium",
-        "name": "Paraben",
-        "purpose": "Kozmetiklerde koruyucu olarak kullanılır.",
-        "effect": "Bazı tüketicilerde hassasiyet ve endokrin etkiler konusundaki tartışmalar nedeniyle dikkatle değerlendirilir."
-    },
-    "fragrance": {
-        "risk": "medium",
-        "name": "Fragrance / Parfüm",
-        "purpose": "Ürüne koku vermek için kullanılır.",
-        "effect": "Alerjiye yatkın veya hassas ciltlerde reaksiyon oluşturabilir."
-    },
-    "parfüm": {
-        "risk": "medium",
-        "name": "Parfüm",
-        "purpose": "Ürüne koku vermek için kullanılır.",
-        "effect": "Hassas ciltlerde alerji veya tahriş oluşturabilir."
-    },
-    "alkol": {
-        "risk": "medium",
-        "name": "Alkol",
-        "purpose": "Çözücü, kurutucu veya taşıyıcı bileşen olarak kullanılabilir.",
-        "effect": "Hassas veya kuru ciltlerde kuruluk ve tahriş yapabilir."
-    },
-    "phenoxyethanol": {
-        "risk": "medium",
-        "name": "Phenoxyethanol",
-        "purpose": "Kozmetiklerde koruyucu olarak kullanılır.",
-        "effect": "Belirli sınırlar içinde kullanılır; hassas ciltlerde dikkat gerektirebilir."
-    },
-    "paraffinum liquidum": {
-        "risk": "medium",
-        "name": "Paraffinum Liquidum / Mineral yağ",
-        "purpose": "Nem tutucu ve yumuşatıcı etki için kullanılır.",
-        "effect": "Genelde bariyer etkisi sağlar; akneye yatkın veya hassas ciltlerde ürün tipine göre dikkat edilebilir."
-    },
-    "mineral oil": {
-        "risk": "medium",
-        "name": "Mineral oil",
-        "purpose": "Nem tutucu/yumuşatıcı olarak kullanılır.",
-        "effect": "Cilt üzerinde bariyer oluşturur; bazı cilt tiplerinde ağır gelebilir."
-    },
-    "dimethicone": {
-        "risk": "medium",
-        "name": "Dimethicone",
-        "purpose": "Ciltte pürüzsüz his ve koruyucu film etkisi oluşturmak için kullanılır.",
-        "effect": "Genelde iyi tolere edilir; ancak bazı kullanıcılar silikon içerikleri tercih etmeyebilir."
-    },
-    "sodyum hidroksit": {
-        "risk": "high",
-        "name": "Sodyum hidroksit",
-        "purpose": "Yağ ve kirleri çözmek, ürünün pH seviyesini düzenlemek için kullanılır.",
-        "effect": "Korozif olabilir; ciltte ve gözde ciddi tahriş veya yanık riski oluşturabilir. Etiket talimatlarına kesinlikle uyulmalıdır."
-    },
-    "sodium hydroxide": {
-        "risk": "high",
-        "name": "Sodyum hidroksit",
-        "purpose": "Yağ ve kirleri çözmek, ürünün pH seviyesini düzenlemek için kullanılır.",
-        "effect": "Korozif olabilir; ciltte ve gözde ciddi tahriş veya yanık riski oluşturabilir. Etiket talimatlarına kesinlikle uyulmalıdır."
-    },
-    "sodyum hipoklorit": {
-        "risk": "high",
-        "name": "Sodyum hipoklorit / Aktif klor",
-        "purpose": "Ağartma, dezenfeksiyon ve mikrobiyal temizlik için kullanılır.",
-        "effect": "Cilt, göz ve solunum yollarını tahriş edebilir. Asit veya amonyak içeren ürünlerle kesinlikle karıştırılmamalıdır."
-    },
-    "sodium hypochlorite": {
-        "risk": "high",
-        "name": "Sodyum hipoklorit / Aktif klor",
-        "purpose": "Ağartma, dezenfeksiyon ve mikrobiyal temizlik için kullanılır.",
-        "effect": "Cilt, göz ve solunum yollarını tahriş edebilir. Asit veya amonyak içeren ürünlerle kesinlikle karıştırılmamalıdır."
-    },
-    "aktif klor": {
-        "risk": "high",
-        "name": "Aktif klor",
-        "purpose": "Ağartıcı ve dezenfektan etki sağlar.",
-        "effect": "Tahriş edici gaz oluşturma riski nedeniyle asit ve amonyak içeren temizleyicilerle karıştırılmamalıdır."
-    },
-    "amonyak": {
-        "risk": "high",
-        "name": "Amonyak",
-        "purpose": "Yağ ve kir çözme amacıyla bazı temizlik ürünlerinde kullanılır.",
-        "effect": "Buharı gözleri ve solunum yollarını tahriş edebilir. Klorlu ürünlerle karıştırılması tehlikelidir."
-    },
-    "ammonia": {
-        "risk": "high",
-        "name": "Amonyak",
-        "purpose": "Yağ ve kir çözme amacıyla bazı temizlik ürünlerinde kullanılır.",
-        "effect": "Buharı gözleri ve solunum yollarını tahriş edebilir. Klorlu ürünlerle karıştırılması tehlikelidir."
-    },
-    "hidroklorik asit": {
-        "risk": "high",
-        "name": "Hidroklorik asit",
-        "purpose": "Kireç, pas ve mineral kalıntılarını çözmek için kullanılır.",
-        "effect": "Koroziftir; klorlu ürünlerle karıştırıldığında tehlikeli gaz açığa çıkarabilir."
-    },
-    "hydrochloric acid": {
-        "risk": "high",
-        "name": "Hidroklorik asit",
-        "purpose": "Kireç, pas ve mineral kalıntılarını çözmek için kullanılır.",
-        "effect": "Koroziftir; klorlu ürünlerle karıştırıldığında tehlikeli gaz açığa çıkarabilir."
-    },
-    "benzalkonyum klorür": {
-        "risk": "high",
-        "name": "Benzalkonyum klorür",
-        "purpose": "Dezenfektan ve antimikrobiyal yüzey aktif madde olarak kullanılır.",
-        "effect": "Yoğun temas ciltte, gözde ve solunum yollarında tahrişe neden olabilir."
-    },
-    "benzalkonium chloride": {
-        "risk": "high",
-        "name": "Benzalkonyum klorür",
-        "purpose": "Dezenfektan ve antimikrobiyal yüzey aktif madde olarak kullanılır.",
-        "effect": "Yoğun temas ciltte, gözde ve solunum yollarında tahrişe neden olabilir."
-    },
-    "noniyonik yüzey aktif madde": {
-        "risk": "medium",
-        "name": "Noniyonik yüzey aktif madde",
-        "purpose": "Yağ ve kirin yüzeyden ayrılmasına yardımcı olur.",
-        "effect": "Ürün yoğunluğuna göre cilt ve göz tahrişine neden olabilir; doğrudan temastan kaçınılmalıdır."
-    },
-    "nonionic surfactant": {
-        "risk": "medium",
-        "name": "Noniyonik yüzey aktif madde",
-        "purpose": "Yağ ve kirin yüzeyden ayrılmasına yardımcı olur.",
-        "effect": "Ürün yoğunluğuna göre cilt ve göz tahrişine neden olabilir; doğrudan temastan kaçınılmalıdır."
-    },
-    "noniyonik aktif madde": {
-        "risk": "medium",
-        "name": "Noniyonik yüzey aktif madde",
-        "purpose": "Yağ ve kirin yüzeyden ayrılmasına yardımcı olur.",
-        "effect": "Ürün yoğunluğuna göre cilt ve göz tahrişine neden olabilir; doğrudan temastan kaçınılmalıdır."
-    },
-    "anyonik yüzey aktif madde": {
-        "risk": "medium",
-        "name": "Anyonik yüzey aktif madde",
-        "purpose": "Temizleme ve köpürme etkisi sağlar.",
-        "effect": "Hassas ciltlerde kuruluk ve tahriş oluşturabilir; gözle temasından kaçınılmalıdır."
-    },
-    "anionic surfactant": {
-        "risk": "medium",
-        "name": "Anyonik yüzey aktif madde",
-        "purpose": "Temizleme ve köpürme etkisi sağlar.",
-        "effect": "Hassas ciltlerde kuruluk ve tahriş oluşturabilir; gözle temasından kaçınılmalıdır."
-    },
-    "hidrojen peroksit": {
-        "risk": "medium",
-        "name": "Hidrojen peroksit",
-        "purpose": "Ağartma, leke çıkarma ve oksitleyici temizlik için kullanılır.",
-        "effect": "Konsantrasyona bağlı olarak cilt ve göz tahrişine neden olabilir."
-    },
-    "hydrogen peroxide": {
-        "risk": "medium",
-        "name": "Hidrojen peroksit",
-        "purpose": "Ağartma, leke çıkarma ve oksitleyici temizlik için kullanılır.",
-        "effect": "Konsantrasyona bağlı olarak cilt ve göz tahrişine neden olabilir."
-    },
-}
-
-TERM_ALIASES = {
-    # Sweeteners
-    "阿斯巴甜": "aspartame",
-    "acésulfame potassium": "acesulfame potassium",
-    "acésulfame k": "acesulfame k",
-    "acesulfam-k": "acesulfame k",
-    "acesulfam k": "acesulfame k",
-    "安赛蜜": "acesulfame potassium",
-    "乙酰磺胺酸钾": "acesulfame potassium",
-    "sucralose": "sucralose",
-    "三氯蔗糖": "sucralose",
-    "fruktose": "fructose",
-    "果糖": "fructose",
-
-    # Preservatives and acidity regulators
-    "kaliumsorbat": "potassium sorbate",
-    "sorbate de potassium": "potassium sorbate",
-    "山梨酸钾": "potassium sorbate",
-    "sorbinsäure": "sorbic acid",
-    "acide sorbique": "sorbic acid",
-    "山梨酸": "sorbic acid",
-    "natriumcitrat": "sodium citrate",
-    "citrate de sodium": "sodium citrate",
-    "柠檬酸钠": "sodium citrate",
-    "apfelsäure": "malic acid",
-    "acide malique": "malic acid",
-    "苹果酸": "malic acid",
-
-    # Starches, aromas and processing aids
-    "modifizierte stärke": "modified food starch",
-    "amidon modifié": "modified food starch",
-    "变性淀粉": "modified food starch",
-    "modifizierte maisstärke": "modified corn starch",
-    "amidon de maïs modifié": "modified corn starch",
-    "变性玉米淀粉": "modified corn starch",
-    "natürliches aroma": "natural flavor",
-    "natürliche aromen": "natural flavor",
-    "arôme naturel": "natural flavor",
-    "arômes naturels": "natural flavors",
-    "天然香料": "natural flavor",
-
-    # Higher attention additives
-    "mononatriumglutamat": "monosodyum glutamat",
-    "glutamate monosodique": "monosodyum glutamat",
-    "谷氨酸钠": "monosodyum glutamat",
-    "natriumnitrit": "sodyum nitrit",
-    "nitrite de sodium": "sodyum nitrit",
-    "亚硝酸钠": "sodyum nitrit",
-    "nitrit": "nitrit",
-    "nitrite": "nitrit",
-    "亚硝酸盐": "nitrit",
-    "titandioxid": "titanyum dioksit",
-    "dioxyde de titane": "titanyum dioksit",
-    "二氧化钛": "titanyum dioksit",
-    "palmöl": "palm",
-    "huile de palme": "palm",
-    "棕榈油": "palm",
-
-    # Cosmetic labels
-    "parfum": "fragrance",
-    "duftstoff": "fragrance",
-    "香精": "fragrance",
-    "苯氧乙醇": "phenoxyethanol",
-    "甲基异噻唑啉酮": "methylisothiazolinone",
-    "三氯生": "triclosan",
-}
+TERM_INFO = dict(SAFETY_ITEMS)
+TERM_ALIASES = dict(SAFETY_ALIASES)
 
 for alias, canonical in TERM_ALIASES.items():
     if canonical in TERM_INFO:
-        TERM_INFO.setdefault(alias, TERM_INFO[canonical])
+        TERM_INFO[alias] = TERM_INFO[canonical]
 
 
 def find_terms(text: str) -> list[dict]:
@@ -872,6 +326,11 @@ def find_terms(text: str) -> list[dict]:
                 found.append(item)
                 seen_names.add(item["name"])
 
+    if any(item.get("name", "").startswith("Endüstriyel trans yağ") for item in found):
+        found = [
+            item for item in found
+            if item.get("name") != "Hidrojene yağ"
+        ]
     return found
 
 
@@ -957,8 +416,14 @@ def neutral_ingredient_names(text: str) -> list[str]:
 
 
 def categorized_content_items(found: list[dict], text: str) -> dict:
+    good_items = neutral_ingredient_names(text)
+    good_items.extend(
+        item["name"] for item in found
+        if normalize_risk(item.get("risk")) == "low"
+        and item["name"] not in good_items
+    )
     return {
-        "good_items": neutral_ingredient_names(text),
+        "good_items": good_items,
         "warning_items": [
             item["name"] for item in found
             if normalize_risk(item.get("risk")) == "medium"
@@ -972,6 +437,16 @@ def categorized_content_items(found: list[dict], text: str) -> dict:
 
 def local_content_analysis(text: str, quality: dict) -> dict:
     found = find_terms(text)
+    for code in unknown_e_codes(text):
+        found.append({
+            "name": f"{code} - Katalog doğrulaması gerekli",
+            "risk": "medium",
+            "purpose": "Etikette bir katkı kodu olarak yer alıyor.",
+            "effect": (
+                "Bu kod yerel WHO/JECFA kataloğunda henüz eşleşmedi; "
+                "otomatik olarak düşük risk verilmez."
+            ),
+        })
 
     if quality["weak"]:
         return {
@@ -1009,7 +484,11 @@ def local_content_analysis(text: str, quality: dict) -> dict:
 
         return {
             "title": risk_title(highest),
-            "message": "\n\n".join(details + [general, "Nihai karar kullanıcıya aittir."]),
+            "message": "\n\n".join(details + [
+                general,
+                "Bu değerlendirme etiketteki madde varlığına dayanır; miktar bilinmediği için ADI aşımı göstermez.",
+                "Nihai karar kullanıcıya aittir.",
+            ]),
             "risk": highest,
             "read_text": text,
             "detected_items": shown,
@@ -1029,10 +508,11 @@ def local_content_analysis(text: str, quality: dict) -> dict:
         }
 
     return {
-        "title": "🟢 Düşük Risk",
+        "title": "ğŸŸ¢ Düşük Risk",
         "message": (
             "Okunan içerik listesinde belirgin yüksek dikkat gerektiren veya hassasiyet açısından öne çıkan madde yakalanmadı.\n\n"
-            "Bu sonuç yalnızca okunan metne göre bilgilendirme amaçlıdır. İçerik eksik okunduysa değerlendirme değişebilir."
+            "Bu sonuç yalnızca okunan metne göre bilgilendirme amaçlıdır. İçerik eksik okunduysa değerlendirme değişebilir. "
+            "Miktar bilinmediği için ADI aşımı göstermez."
         ),
         "risk": "low",
         "read_text": text,
@@ -1086,6 +566,15 @@ def is_instruction_or_warning_text(value: str) -> bool:
     return any(verb in lower for verb in instruction_verbs)
 
 
+def detected_item_identity(name: str) -> str:
+    lower = str(name or "").lower().strip()
+    for alias in sorted(SAFETY_ALIASES, key=len, reverse=True):
+        pattern = r"(?<![\w])" + re.escape(alias.lower()) + r"(?![\w])"
+        if re.search(pattern, lower):
+            return f"catalog:{SAFETY_ALIASES[alias]}"
+    return re.sub(r"[^a-z0-9çğıöşü]+", " ", lower).strip()
+
+
 def merge_detected_items(ai_items, *texts: str) -> list[dict]:
     merged = []
     seen = set()
@@ -1097,10 +586,15 @@ def merge_detected_items(ai_items, *texts: str) -> list[dict]:
             name = str(item.get("name") or "").strip()
             if not name or is_instruction_or_warning_text(name):
                 continue
-            key = name.lower()
+            key = detected_item_identity(name)
             if key in seen:
                 continue
-            merged.append(item)
+            normalized_item = dict(item)
+            normalized_item["risk"] = normalized_food_risk(
+                name,
+                normalize_risk(str(item.get("risk", ""))),
+            )
+            merged.append(normalized_item)
             seen.add(key)
 
     combined_text = "\n".join([str(text or "") for text in texts])
@@ -1108,10 +602,10 @@ def merge_detected_items(ai_items, *texts: str) -> list[dict]:
         name = str(item.get("name") or "").strip()
         if not name:
             continue
-        key = name.lower()
+        key = detected_item_identity(name)
         if key in seen:
             for existing in merged:
-                if str(existing.get("name") or "").strip().lower() != key:
+                if detected_item_identity(existing.get("name") or "") != key:
                     continue
                 if risk_rank(item.get("risk", "")) > risk_rank(existing.get("risk", "")):
                     existing["risk"] = item.get("risk", "medium")
@@ -1233,6 +727,17 @@ Kurallar:
 - Kullanıcıya "al" veya "alma" deme.
 - Kesin tıbbi hüküm verme.
 - Nihai karar kullanıcıya ait olduğunu belirt.
+- İçerik miktarı bilinmiyorsa ADI'nın aşıldığını iddia etme; değerlendirmenin yalnız etiket varlığına dayandığını açıkça belirt.
+- Bir katkı maddesini yalnız E/INS kodu taşıdığı için high yapma.
+- JECFA tarafından sayısal ADI verilmiş, miktara bağlı veya WHO tüketim azaltma önerisi bulunan maddeleri genel olarak medium değerlendir.
+- JECFA'nın ADI "not specified" değerlendirmesi yaptığı maddeleri, başka özel risk yoksa low/bilgi olarak değerlendir.
+- Aspartam/E951, asesülfam K/E950, sukraloz/E955, sakarin/E954, siklamat/E952 ve steviol glikozitleri/E960 high değil medium olmalıdır; fenilketonüride aspartam için özel uyarı ver.
+- MSG/E621 high değildir; toplam sodyum ve kişisel hassasiyet için bilgi ver.
+- E330, E300, E301, E302, E322, E331, E410, E412, E415, E440, E471, E500 ve E551 başka özel risk yoksa low/bilgi grubundadır.
+- E200-E203, E210-E213, E220-E228, E249-E252, E320-E321, E338-E341, E407, E445, E450-E452 medium grubundadır.
+- Şeker, glikoz/fruktoz/mısır şurubu yalnız var diye high değildir; miktar bilinmiyorsa medium değerlendir.
+- Genel "hidrojene yağ" ifadesini medium; "kısmen hidrojene" veya endüstriyel trans yağı high değerlendir.
+- Gıda için high kategorisini endüstriyel trans yağ gibi açık kaçınma durumlarına ayır. Bölgesel mevzuat farkını sağlık riskiyle karıştırma.
 - Sadece "madde var" deme; maddenin ne işe yaradığını ve sağlık açısından neden dikkat gerektirebileceğini açıkla.
 - Görsel varsa OCR metnine bağlı kalma; ürün arka etiketindeki İçindekiler/Ingredients alanını görselden oku.
 - Görselden okuduğun içerik listesini read_text alanına mümkün olduğunca tam yaz.
@@ -1256,7 +761,7 @@ unknown = net okunamadı veya içerik listesi eksik.
 JSON dışında hiçbir şey yazma.
 JSON:
 {
-  "title": "🔴/🟡/🟢/⚠️ kısa başlık",
+  "title": "ğŸ”´/ğŸŸ¡/ğŸŸ¢/⚠️ kısa başlık",
   "risk": "high | medium | low | unknown",
   "read_text": "Görselden/OCR'dan okunan mümkün olan en tam içerik listesi",
   "message": "Detaylı ama sade açıklama. Önce önemli maddeleri açıkla: ne işe yarar, sağlık açısından ne anlama gelir. Sonra genel değerlendirme ve 'Nihai karar kullanıcıya aittir.' cümlesi.",
@@ -1324,7 +829,11 @@ JSON:
         final_risk = highest_risk_from_items(detected_items, risk_floor)
 
         return {
-            "title": ai_result.get("title") or risk_title(final_risk),
+            "title": (
+                risk_title(final_risk)
+                if requested_language == "tr"
+                else ai_result.get("title") or risk_title(final_risk)
+            ),
             "message": ai_result.get("message") or fallback["message"],
             "risk": final_risk,
             "read_text": read_text,
@@ -1334,6 +843,13 @@ JSON:
 
     except Exception:
         return fallback
+
+import json
+import re
+import urllib.parse
+import urllib.request
+
+from fastapi import APIRouter, Depends
 
 
 
@@ -1650,7 +1166,7 @@ def market_website_url(source: str, query: str) -> str:
 def build_price_message(product_name: str, query: str, results: list[dict]) -> dict:
     if not results:
         return {
-            "title": "💰 Fiyat Bilgisi Bulunamadı",
+            "title": "ğŸ’° Fiyat Bilgisi Bulunamadı",
             "message": (
                 f"Ürün: {product_name or query}\n"
                 "Karşılaştırılabilir güncel fiyat bulunamadı. Ürün adı, marka, gramaj veya etiket daha net okutulursa sonuç iyileşir."
@@ -1681,12 +1197,12 @@ def build_price_message(product_name: str, query: str, results: list[dict]) -> d
     if saving_percent >= 10:
         risk = "low"
         price_status = "good"
-        title = "🟢 Uygun Fiyat"
+        title = "ğŸŸ¢ Uygun Fiyat"
         comment = "Bulunan en düşük fiyat piyasa ortalamasının altında görünüyor."
     else:
         risk = "medium"
         price_status = "normal"
-        title = "🟡 Benzer Fiyatlar"
+        title = "ğŸŸ¡ Benzer Fiyatlar"
         comment = "Bulunan mağaza fiyatları birbirine yakın görünüyor."
 
     lines = [
@@ -1733,7 +1249,7 @@ async def analyze_price(
 
     if len(query) < 3:
         return {
-            "title": "💰 Ürün Net Algılanamadı",
+            "title": "ğŸ’° Ürün Net Algılanamadı",
             "message": (
                 "Fiyat karşılaştırması için ürün adı, marka veya gramaj net algılanamadı. "
                 "Ürünün ön yüzünü, barkodunu veya fiyat etiketini daha net göstererek tekrar deneyin."
@@ -1752,7 +1268,7 @@ async def analyze_price(
 
     except Exception:
         return {
-            "title": "💰 Fiyat Analizi Tamamlanamadı",
+            "title": "ğŸ’° Fiyat Analizi Tamamlanamadı",
             "message": (
                 "Fiyat karşılaştırması sırasında bağlantı veya API tarafında sorun oluştu. "
                 "Market Fiyatı verisine ulaşılamadı. Biraz sonra tekrar deneyin."
@@ -1766,6 +1282,13 @@ async def analyze_price(
 
 
 # Besin tarafı: içerik analizi gibi güçlü, JSON tabanlı ve panel dostu çıktı üretir.
+
+import json
+
+from fastapi import APIRouter, Depends
+
+
+
 def nutrition_score_from_risk(risk: str) -> int:
     risk = normalize_risk(risk)
     if risk == "low":
@@ -1814,7 +1337,7 @@ def normalize_nutrition_payload(parsed: dict) -> dict:
     portion = str(parsed.get("portion") or "Belirsiz")
     nova = str(parsed.get("nova") or "Belirsiz")
     confidence = str(parsed.get("confidence") or "medium")
-    title = parsed.get("title") or "🟡 Besin Analizi"
+    title = parsed.get("title") or "ğŸŸ¡ Besin Analizi"
 
     if not alerts:
         alerts = ["Besin değerleri görselden tahmini olarak hesaplandı."]
@@ -1935,7 +1458,7 @@ Zorunlu JSON:
 
         if not parsed:
             return normalize_nutrition_payload({
-                "title": "🟡 Besin Analizi",
+                "title": "ğŸŸ¡ Besin Analizi",
                 "message": result_text,
                 "risk": "medium",
                 "score": 50,
@@ -1947,10 +1470,14 @@ Zorunlu JSON:
 
     except Exception:
         return normalize_nutrition_payload({
-            "title": "🟡 Besin Analizi Tamamlanamadı",
+            "title": "ğŸŸ¡ Besin Analizi Tamamlanamadı",
             "message": "Besin analizi şu anda tamamlanamadı. Lütfen biraz sonra tekrar deneyin.",
             "risk": "unknown",
             "score": 0,
             "nutrition": {},
             "alerts": ["Bağlantı veya analiz sırasında sorun oluştu."]
         })
+
+@app.get("/")
+def root():
+    return {"status": "ok", "service": "icinde-ne-var-backend"}
