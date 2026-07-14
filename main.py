@@ -29,12 +29,18 @@ class NutritionRequest(BaseModel):
     language: str = "tr"
 
 
+class FoodSearchRequest(BaseModel):
+    query: str
+
+
 
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 from time import monotonic
 import json
 import os
+import urllib.parse
+import urllib.request
 
 import firebase_admin
 from firebase_admin import auth as firebase_auth, credentials, firestore
@@ -845,6 +851,24 @@ def normalize_nutrition_payload(parsed: dict) -> dict:
     nutrition = parsed.get("nutrition") if isinstance(parsed.get("nutrition"), dict) else {}
     alerts = parsed.get("alerts") if isinstance(parsed.get("alerts"), list) else []
     audience_notes = parsed.get("audience_notes") if isinstance(parsed.get("audience_notes"), dict) else {}
+    food_items = parsed.get("food_items") if isinstance(parsed.get("food_items"), list) else []
+    normalized_food_items = []
+    for item in food_items[:8]:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        normalized_food_items.append({
+            "name": name,
+            "amount": str(item.get("amount") or "1 porsiyon"),
+            "grams": item.get("grams") or 0,
+            "calories": item.get("calories") or 0,
+            "protein": item.get("protein") or 0,
+            "carbohydrate": item.get("carbohydrate") or 0,
+            "fat": item.get("fat") or 0,
+            "fiber": item.get("fiber") or 0,
+        })
     product_name = str(
         parsed.get("product_name")
         or parsed.get("detected_food")
@@ -904,6 +928,7 @@ def normalize_nutrition_payload(parsed: dict) -> dict:
         "nova": nova,
         "confidence": confidence,
         "nutrition": nutrition,
+        "food_items": normalized_food_items,
         "alerts": alerts[:6],
         "audience_notes": {
             "children": audience_notes.get("children", "Porsiyon ve tüketim sıklığına dikkat edilmelidir."),
@@ -965,6 +990,18 @@ Zorunlu JSON:
     "fiber": "... g veya belirsiz",
     "salt": "... g veya belirsiz"
   },
+  "food_items": [
+    {
+      "name": "Görseldeki yiyecek adı",
+      "amount": "Tahmini miktar (örn. 1 porsiyon)",
+      "grams": 120,
+      "calories": 200,
+      "protein": 20,
+      "carbohydrate": 10,
+      "fat": 8,
+      "fiber": 2
+    }
+  ],
   "alerts": ["Kısa uyarı 1", "Kısa uyarı 2"],
   "audience_notes": {
     "children": "Çocuklar için kısa not",
@@ -1021,3 +1058,84 @@ Zorunlu JSON:
 @app.get("/")
 def root():
     return {"status": "ok", "service": "icinde-ne-var-backend"}
+
+
+LOCAL_FOOD_CATALOG = {
+    "mercimek çorbası": {"calories": 180, "protein": 9, "carbohydrate": 28, "fat": 4, "fiber": 7},
+    "menemen": {"calories": 250, "protein": 14, "carbohydrate": 12, "fat": 16, "fiber": 3},
+    "mantı": {"calories": 430, "protein": 18, "carbohydrate": 55, "fat": 15, "fiber": 3},
+    "lahmacun": {"calories": 330, "protein": 15, "carbohydrate": 42, "fat": 11, "fiber": 4},
+    "pirinç pilavı": {"calories": 260, "protein": 5, "carbohydrate": 52, "fat": 4, "fiber": 1},
+    "kuru fasulye": {"calories": 310, "protein": 16, "carbohydrate": 45, "fat": 8, "fiber": 13},
+    "tavuk ızgara": {"calories": 250, "protein": 42, "carbohydrate": 0, "fat": 8, "fiber": 0},
+}
+FOOD_SEARCH_CACHE: dict[str, tuple[float, list[dict]]] = {}
+
+
+def _nutrient_value(food: dict, names: set[str], unit: str | None = None) -> float:
+    for nutrient in food.get("foodNutrients") or []:
+        name = str(nutrient.get("nutrientName") or "").lower()
+        nutrient_unit = str(nutrient.get("unitName") or "").upper()
+        if name in names and (unit is None or nutrient_unit == unit.upper()):
+            try:
+                return float(nutrient.get("value") or 0)
+            except (TypeError, ValueError):
+                return 0
+    return 0
+
+
+@app.post("/food-search")
+async def food_search(
+    data: FoodSearchRequest,
+    _user: dict = Depends(require_firebase_user),
+):
+    query = " ".join(data.query.strip().lower().split())
+    if len(query) < 2:
+        raise HTTPException(status_code=400, detail="Arama metni çok kısa.")
+
+    local_results = []
+    for name, nutrition in LOCAL_FOOD_CATALOG.items():
+        if query in name or name in query:
+            local_results.append({
+                "name": name.title(),
+                "portion": "1 porsiyon",
+                "source": "local_tr",
+                **nutrition,
+            })
+    if local_results:
+        return {"results": local_results, "cached": True}
+
+    cached = FOOD_SEARCH_CACHE.get(query)
+    if cached and monotonic() - cached[0] < 86400:
+        return {"results": cached[1], "cached": True}
+
+    api_key = os.getenv("USDA_API_KEY", "DEMO_KEY").strip()
+    url = "https://api.nal.usda.gov/fdc/v1/foods/search?" + urllib.parse.urlencode({
+        "api_key": api_key,
+        "query": query,
+        "pageSize": 8,
+    })
+    try:
+        with urllib.request.urlopen(url, timeout=8) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Besin veri kaynağına şu anda ulaşılamıyor.",
+        ) from exc
+
+    results = []
+    for food in (payload.get("foods") or [])[:8]:
+        results.append({
+            "fdcId": food.get("fdcId"),
+            "name": food.get("description") or "Besin",
+            "portion": "100 g",
+            "source": "usda_fdc",
+            "calories": _nutrient_value(food, {"energy"}, "KCAL"),
+            "protein": _nutrient_value(food, {"protein"}),
+            "carbohydrate": _nutrient_value(food, {"carbohydrate, by difference"}),
+            "fat": _nutrient_value(food, {"total lipid (fat)"}),
+            "fiber": _nutrient_value(food, {"fiber, total dietary"}),
+        })
+    FOOD_SEARCH_CACHE[query] = (monotonic(), results)
+    return {"results": results, "cached": False}
